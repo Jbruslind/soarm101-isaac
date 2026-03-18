@@ -1,0 +1,3 @@
+[console_scripts]
+vla_bridge = soarm_vla_bridge.vla_bridge_node:main
+

@@ -1,0 +1,96 @@
+# Standalone GPU stack for deployment on a remote cloud machine.
+# Contains only the OpenPi inference server + TLS proxy + training container.
+# Local sim/robot connects to this via WebSocket over LAN/WAN.
+#
+# Usage:
+#   docker compose -f docker-compose.cloud.yml up -d openpi-server caddy
+#   docker compose -f docker-compose.cloud.yml run training
+
+services:
+  # ---------------------------------------------------------------------------
+  # OpenPi Policy Server (cloud GPU)
+  # ---------------------------------------------------------------------------
+  openpi-server:
+    build:
+      context: ./openpi-server
+      dockerfile: Dockerfile
+    image: soarm-openpi
+    container_name: soarm-openpi-cloud
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - OPENPI_PORT=${OPENPI_PORT:-8000}
+      - OPENPI_POLICY_CONFIG=${OPENPI_POLICY_CONFIG:-soarm_pi0_fast}
+      - OPENPI_CHECKPOINT_DIR=/models/soarm_lora
+    volumes:
+      - ./models:/models:ro
+      - ./training/configs:/app/openpi/src/openpi/training/configs_custom:ro
+    networks:
+      - gpunet
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Caddy TLS Reverse Proxy: wss:// termination for remote WebSocket
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: soarm-caddy
+    ports:
+      - "8443:8443"
+      - "443:443"
+    volumes:
+      - ./openpi-server/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - gpunet
+    depends_on:
+      - openpi-server
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Training (cloud GPU -- full precision, no quantization needed)
+  # ---------------------------------------------------------------------------
+  training:
+    build:
+      context: ./training
+      dockerfile: Dockerfile
+    image: soarm-training
+    container_name: soarm-training-cloud
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - TRAINING_BATCH_SIZE=${TRAINING_BATCH_SIZE:-4}
+      - TRAINING_GRAD_ACCUM=${TRAINING_GRAD_ACCUM:-4}
+      - TRAINING_LORA_RANK=${TRAINING_LORA_RANK:-32}
+      - TRAINING_QUANTIZE_BASE=${TRAINING_QUANTIZE_BASE:-false}
+    volumes:
+      - ./data:/data:ro
+      - ./models:/models:rw
+      - ./training:/training:ro
+    shm_size: "16g"
+    networks:
+      - gpunet
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: "no"
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+networks:
+  gpunet:
+    driver: bridge

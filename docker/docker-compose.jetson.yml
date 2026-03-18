@@ -1,0 +1,54 @@
+# OpenPi stack for NVIDIA Jetson (Xavier AGX / Orin).
+#
+# Uses host network so OpenPi listens on the host's 0.0.0.0:8000 and is
+# reachable at <Jetson_IP>:8000 (or via Caddy at <Jetson_IP>:8443).
+#
+# Build first time (pass your L4T version):
+#   docker compose -f docker-compose.jetson.yml build --build-arg L4T_TAG=r35.4.1
+#
+# Usage:
+#   cd docker
+#   docker compose -f docker-compose.jetson.yml up -d
+
+services:
+  # ---------------------------------------------------------------------------
+  # OpenPi Policy Server (Jetson GPU, host network)
+  # ---------------------------------------------------------------------------
+  openpi-server:
+    build:
+      context: ./openpi-server
+      dockerfile: Dockerfile.jetson
+      args:
+        L4T_TAG: ${L4T_TAG:-r35.4.1}
+    image: soarm-openpi-jetson
+    container_name: soarm-openpi-jetson
+    network_mode: host
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OPENPI_PORT=${OPENPI_PORT:-8000}
+      - OPENPI_POLICY_CONFIG=${OPENPI_POLICY_CONFIG:-soarm_pi0_fast}
+      - OPENPI_CHECKPOINT_DIR=/models/soarm_lora
+    volumes:
+      - ./models:/models:ro
+      - ./training/configs:/app/openpi/src/openpi/training/configs_custom:ro
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Caddy TLS Reverse Proxy (host network; proxies 8443 -> 127.0.0.1:8000)
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: soarm-caddy
+    network_mode: host
+    volumes:
+      - ./openpi-server/Caddyfile.jetson:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - openpi-server
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

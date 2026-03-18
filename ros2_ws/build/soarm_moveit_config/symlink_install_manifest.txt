@@ -1,0 +1,16 @@
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/config/soarm101.srdf
+/ros2_ws/install/soarm_moveit_config/share/ament_index/resource_index/package_run_dependencies/soarm_moveit_config
+/ros2_ws/install/soarm_moveit_config/share/ament_index/resource_index/parent_prefix_path/soarm_moveit_config
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/environment/ament_prefix_path.sh
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/environment/ament_prefix_path.dsv
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/environment/path.sh
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/environment/path.dsv
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/local_setup.bash
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/local_setup.sh
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/local_setup.zsh
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/local_setup.dsv
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/package.dsv
+/ros2_ws/install/soarm_moveit_config/share/ament_index/resource_index/packages/soarm_moveit_config
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/cmake/soarm_moveit_configConfig.cmake
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/cmake/soarm_moveit_configConfig-version.cmake
+/ros2_ws/install/soarm_moveit_config/share/soarm_moveit_config/package.xml

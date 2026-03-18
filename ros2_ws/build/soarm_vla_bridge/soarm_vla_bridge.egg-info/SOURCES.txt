@@ -1,0 +1,14 @@
+package.xml
+setup.cfg
+setup.py
+resource/soarm_vla_bridge
+soarm_vla_bridge/__init__.py
+soarm_vla_bridge/observation_builder.py
+soarm_vla_bridge/vla_bridge_node.py
+soarm_vla_bridge.egg-info/PKG-INFO
+soarm_vla_bridge.egg-info/SOURCES.txt
+soarm_vla_bridge.egg-info/dependency_links.txt
+soarm_vla_bridge.egg-info/entry_points.txt
+soarm_vla_bridge.egg-info/requires.txt
+soarm_vla_bridge.egg-info/top_level.txt
+soarm_vla_bridge.egg-info/zip-safe

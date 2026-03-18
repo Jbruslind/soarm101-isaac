@@ -1,0 +1,4 @@
+source;share/soarm_description/local_setup.bash
+source;share/soarm_description/local_setup.dsv
+source;share/soarm_description/local_setup.sh
+source;share/soarm_description/local_setup.zsh

@@ -1,0 +1,12 @@
+# TLS reverse proxy for OpenPi WebSocket server.
+# For development / self-signed: use :8443
+# For production: replace with your domain for auto Let's Encrypt.
+
+:8443 {
+    reverse_proxy openpi-server:8000
+}
+
+# Production example (uncomment and replace):
+# gpu.yourdomain.com {
+#     reverse_proxy openpi-server:8000
+# }
