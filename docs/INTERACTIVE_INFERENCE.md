@@ -191,7 +191,7 @@ User Machine                         Docker Host (GPU)
 | `/joint_states` | `sensor_msgs/JointState` | Isaac Sim -> Bridge | Current joint positions and velocities |
 | `/camera/wrist/image_raw` | `sensor_msgs/Image` | Isaac Sim -> Bridge | 224x224 wrist camera feed |
 | `/camera/overhead/image_raw` | `sensor_msgs/Image` | Isaac Sim -> Bridge | 224x224 overhead camera feed |
-| `/joint_commands` | `trajectory_msgs/JointTrajectory` | Bridge -> Isaac Sim | Joint position targets from the VLA |
+| `/joint_commands` | `sensor_msgs/JointState` | Bridge -> Isaac Sim | Joint position targets from the VLA |
 | `/vla/prompt` | `std_msgs/String` | Isaac Sim -> Bridge | Natural language instruction |
 | `/vla/enabled` | `std_msgs/Bool` | Isaac Sim -> Bridge | `True` = run inference, `False` = stop and flush |
 
@@ -207,8 +207,8 @@ Both cameras match the LeRobot / ALOHA / OpenPi standard:
 | Focal length | 1.93 mm |
 | Horizontal aperture | 2.65 mm |
 
-The wrist camera is attached to `gripper_frame_link` with offset `(0.05, 0, 0.02)`.
-The overhead camera is at world position `(0.8, 0.8, 0.5)`.
+The wrist camera is attached to `gripper_frame_link` with offset `(-0.03, 0.05, -0.09)`.
+The overhead camera is authored with world transform `(0.1, 0.0, 0.8)` and Euler `(0, -20, 0)`.
 
 ---
 

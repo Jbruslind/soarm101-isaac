@@ -10,8 +10,11 @@
 #   ./scripts/interactive_test.sh --public-ip 192.168.1.50
 #   ./scripts/interactive_test.sh --model-config soarm_pi0
 #   ./scripts/interactive_test.sh --checkpoint /path/to/lora/weights
+#   ./scripts/interactive_test.sh --policy-mode soarm --model-config soarm_pi0_fast --checkpoint /models/soarm_lora
+#   ./scripts/interactive_test.sh --policy-mode droid --model-config pi0_fast_droid
 #   ./scripts/interactive_test.sh --remote gpu-server.example.com           # remote inference (port 8443)
 #   ./scripts/interactive_test.sh --remote 192.168.1.100 --port 8000         # remote OpenVLA on port 8000
+#   VLA_AUTO_STOP_SEC=300 ./scripts/interactive_test.sh --remote HOST        # lengthen Execute auto-stop (default 120s)
 #
 # Prerequisites:
 #   - NVIDIA GPU with NVENC support (RTX series; A100 NOT supported)
@@ -32,6 +35,10 @@ CHECKPOINT=""
 SIM_ONLY=0
 REMOTE_HOST=""
 REMOTE_PORT="8443"
+ROS2_GRAPH_MODE="soarm"
+POLICY_MODE="${OPENPI_POLICY_MODE:-soarm}"
+# Isaac panel "Auto-stop (sec)" default; must exceed slow remote OpenPi (often 60–120s+ first chunk).
+VLA_AUTO_STOP_SEC="${VLA_AUTO_STOP_SEC:-120}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -41,9 +48,32 @@ while [[ $# -gt 0 ]]; do
         --sim-only) SIM_ONLY=1; shift ;;
         --remote) REMOTE_HOST="$2"; shift 2 ;;
         --port) REMOTE_PORT="$2"; shift 2 ;;
+        --ros2-graph-mode) ROS2_GRAPH_MODE="$2"; shift 2 ;;
+        --policy-mode) POLICY_MODE="$2"; shift 2 ;;
+        --auto-stop) VLA_AUTO_STOP_SEC="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
+
+if [[ "$ROS2_GRAPH_MODE" != "soarm" && "$ROS2_GRAPH_MODE" != "minimal" ]]; then
+    echo "Invalid --ros2-graph-mode: $ROS2_GRAPH_MODE (use 'soarm' or 'minimal')"
+    exit 1
+fi
+if [[ "$POLICY_MODE" != "soarm" && "$POLICY_MODE" != "droid" ]]; then
+    echo "Invalid --policy-mode: $POLICY_MODE (use 'soarm' or 'droid')"
+    exit 1
+fi
+if [[ "$POLICY_MODE" == "soarm" ]]; then
+    if [[ "$MODEL_CONFIG" != soarm_* ]]; then
+        echo "Invalid --model-config for soarm mode: $MODEL_CONFIG (expected prefix 'soarm_')"
+        exit 1
+    fi
+    if [[ -z "$CHECKPOINT" && -z "$REMOTE_HOST" && $SIM_ONLY -eq 0 ]]; then
+        echo "ERROR: --policy-mode soarm requires --checkpoint for local OpenPi server."
+        echo "       Refusing implicit fallback to DROID."
+        exit 1
+    fi
+fi
 
 if [[ -z "$PUBLIC_IP" ]]; then
     PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || PUBLIC_IP="127.0.0.1"
@@ -53,8 +83,16 @@ echo "=== Interactive VLA Inference Test ==="
 echo ""
 echo "Configuration:"
 echo "  Public IP:     $PUBLIC_IP"
+echo "  ROS2 graph:    $ROS2_GRAPH_MODE"
+echo "  Policy mode:   $POLICY_MODE"
+echo "  VLA auto-stop: ${VLA_AUTO_STOP_SEC}s (Execute timer in Sim panel; env VLA_AUTO_STOP_SEC or --auto-stop)"
 if [[ -n "$REMOTE_HOST" ]]; then
     echo "  Inference:     REMOTE → ${REMOTE_HOST}:${REMOTE_PORT}"
+    if [[ "$REMOTE_PORT" == "8443" ]]; then
+        echo "  Note:          The ROS2 bridge uses openpi-client (ws://)."
+        echo "                If your remote uses Caddy TLS on :8443, use --port 8000 (direct)"
+        echo "                or configure a trusted TLS endpoint for wss://."
+    fi
 else
     echo "  Model config:  $MODEL_CONFIG"
     echo "  Sim-only mode: $( [[ $SIM_ONLY -eq 1 ]] && echo "YES (no VLA server)" || echo "no" )"
@@ -105,6 +143,9 @@ EXTRA_ENV+=(-e "PUBLIC_IP=$PUBLIC_IP")
 EXTRA_ENV+=(-e ENABLE_CAMERAS=1)
 EXTRA_ENV+=(-e PYTHONUNBUFFERED=1)
 EXTRA_ENV+=(-e "OPENPI_POLICY_CONFIG=$MODEL_CONFIG")
+EXTRA_ENV+=(-e "OPENPI_POLICY_MODE=$POLICY_MODE")
+EXTRA_ENV+=(-e "ROS2_GRAPH_MODE=$ROS2_GRAPH_MODE")
+EXTRA_ENV+=(-e "VLA_AUTO_STOP_SEC=$VLA_AUTO_STOP_SEC")
 
 if [[ -n "$CHECKPOINT" ]]; then
     EXTRA_ENV+=(-e "OPENPI_CHECKPOINT_DIR=$CHECKPOINT")
@@ -114,19 +155,23 @@ if [[ -n "$REMOTE_HOST" ]]; then
     # Use remote inference: start only the ROS2 bridge, point at remote server
     echo "Starting ROS2 bridge (remote inference at ${REMOTE_HOST}:${REMOTE_PORT})..."
     echo "  (To watch bridge logs: cd $PROJECT_DIR/docker && docker compose --profile interactive logs -f ros2-bridge)"
-    OPENPI_HOST="$REMOTE_HOST" OPENPI_PORT="$REMOTE_PORT" docker compose --profile interactive up -d ros2-bridge
+    OPENPI_HOST="$REMOTE_HOST" OPENPI_PORT="$REMOTE_PORT" OPENPI_POLICY_MODE="$POLICY_MODE" docker compose --profile interactive up -d ros2-bridge
 elif [[ $SIM_ONLY -eq 0 ]]; then
     # Local inference: start OpenPi server and ROS2 bridge
     echo "Starting OpenPi server and ROS2 bridge..."
-    docker compose --profile interactive up -d openpi-server ros2-bridge
+    OPENPI_POLICY_MODE="$POLICY_MODE" OPENPI_POLICY_CONFIG="$MODEL_CONFIG" OPENPI_CHECKPOINT_DIR="$CHECKPOINT" docker compose --profile interactive up -d openpi-server ros2-bridge
 fi
 
 # Run Isaac Sim in the foreground with the interactive script.
+# --kit_args enables the ROS2 bridge extension at Kit startup so it is loaded
+# before the Python script tries to import it. On first run the extension is
+# downloaded to the persistent isaac-cache-kit volume; subsequent runs use cache.
 echo "Starting Isaac Sim with interactive inference environment..."
 docker compose --profile interactive run --rm \
     "${EXTRA_ENV[@]}" \
     isaac-sim \
-    /isaac-sim/python.sh /isaac_envs/interactive_inference.py
+    /isaac-sim/python.sh /isaac_envs/interactive_inference.py \
+    --kit_args '--enable isaacsim.ros2.bridge --/rtx/verifyDriverVersion/enabled=false'
 
 # Cleanup background services on exit (we started something unless sim-only only)
 echo ""

@@ -10,15 +10,18 @@ services:
       dockerfile: Dockerfile
     image: soarm-isaac-sim
     container_name: soarm-isaac-sim
-    entrypoint: bash
     tty: true
     stdin_open: true
     runtime: nvidia
+    gpus: all
     network_mode: host
     environment:
       - ACCEPT_EULA=${ACCEPT_EULA:-Y}
       - PRIVACY_CONSENT=${PRIVACY_CONSENT:-Y}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - LIVESTREAM=${LIVESTREAM:-0}
+      - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
       - FASTRTPS_DEFAULT_PROFILES_FILE=/usr/local/share/middleware_profiles/rtps_udp_profile.xml
@@ -60,6 +63,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
       - OPENPI_PORT=${OPENPI_PORT:-8000}
+      - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
       - OPENPI_POLICY_CONFIG=${OPENPI_POLICY_CONFIG:-soarm_pi0_fast}
       - OPENPI_CHECKPOINT_DIR=/models/soarm_lora
     volumes:
@@ -89,8 +93,13 @@ services:
     environment:
       - OPENPI_HOST=${OPENPI_HOST:-localhost}
       - OPENPI_PORT=${OPENPI_PORT:-8000}
+      - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      # Isaac Sim sets FASTRTPS_DEFAULT_PROFILES_FILE to UDP-only. The default Fast DDS
+      # stack may otherwise use shared memory for localhost peers; Isaac's subscriber
+      # then never sees /joint_commands. Force UDP so bridge ↔ Sim discovery matches.
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
     volumes:
       - ../robot_description:/robot_description:ro
       - ../ros2_ws:/ros2_ws:rw

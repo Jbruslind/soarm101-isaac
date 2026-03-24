@@ -151,6 +151,48 @@ objects from being ejected by collision resolution.
 2. Check that lighting exists in the scene (`DomeLightCfg`)
 3. Verify `use_camera=True` is set in the environment config
 
+### PhysX tensor device mismatch in ROS2 joint publishing (`expected device 0, received device -1`)
+
+If you see errors like:
+
+```text
+[omni.physx.tensors.plugin] Incompatible device of DOF position tensor in function getDofAttribute: expected device 0, received device -1
+[Ros2JointStateMessage] Failed to get dof positions
+[Ros2JointStateMessage] Failed to get dof velocities
+[Ros2JointStateMessage] Failed to get dof efforts
+```
+
+this is a known incompatibility between Isaac Lab GPU pipelines and the OmniGraph ROS2 joint-state publisher.
+The ROS2 bridge currently does not fully support GPU tensor pipelines for this path.
+
+Root cause:
+
+- `ROS2PublishJointState` reads DOF tensors from `omni.physx.tensors.plugin`
+- Isaac Lab articulation + `SimulationCfg(device="cuda")` can place/track tensors differently
+- The ROS2 publisher expects device `0` (GPU) but receives device `-1` (CPU), causing a hard mismatch
+
+Fix option A (recommended for interactive/VLA demo):
+
+1. Force CPU simulation tensors in the interactive sim script:
+   - In `isaac_envs/interactive_inference.py`, set:
+   ```python
+   sim_cfg = SimulationCfg(dt=1 / 120.0, render_interval=2, device="cpu")
+   ```
+2. Restart the simulation and verify `/joint_states` publishes cleanly.
+
+Fix option B (for future GPU-heavy training workflows):
+
+- Keep simulation on GPU, but bypass OmniGraph `ROS2PublishJointState`.
+- Publish `sensor_msgs/JointState` directly from Python using `rclpy`, reading from `Articulation`:
+  - `robot.data.joint_pos`, `robot.data.joint_vel`
+  - publish at your control/update rate in the sim loop
+- This avoids the legacy `omni.physx.tensors` DOF read path used by the ROS2 OmniGraph node.
+
+Important articulation target note:
+
+- For `ROS2PublishJointState.inputs:targetPrim` and `IsaacArticulationController.inputs:robotPath`,
+  use the prim that actually has `ArticulationRootAPI` (often a descendant like `/root_joint`, not always the top robot Xform).
+
 ### Viewing camera feeds in the interactive test (GUI)
 
 To see what each camera sees so you can adjust their position/orientation:
@@ -287,6 +329,11 @@ grep 'type="revolute"' robot_description/urdf/soarm101.urdf
 ## Remote Deployment
 
 ### No robot movement with remote Jetson (or remote OpenPi)
+
+Before deep debugging, ensure policy mode/schema alignment is correct:
+
+- See `docs/CONFIG_ALIGNMENT.md` and choose one explicit mode (`soarm` or `droid`).
+- Avoid mixed mode config/checkpoint combinations; they can produce incoherent trajectories.
 
 When you click **Execute** in the interactive test but the robot does not move, the problem is somewhere on: **Isaac Sim → ROS2 bridge → network → Jetson OpenPi → back to bridge → /joint_commands → Sim**.
 
