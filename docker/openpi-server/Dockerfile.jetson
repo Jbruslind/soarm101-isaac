@@ -15,6 +15,10 @@
 #   docker build -f Dockerfile.jetson \
 #       --build-arg L4T_TAG=r35.4.1 \
 #       -t soarm-openpi-jetson .
+#
+# SOARM inference before you have a LoRA export: set OPENPI_POLICY_MODE=soarm and either mount
+# OPENPI_CHECKPOINT_DIR or omit it — entrypoint.jetson.sh falls back to OpenPi pi0_fast_base /
+# pi0_base for soarm_pi0_fast / soarm_pi0 (override with OPENPI_BASE_CHECKPOINT_DIR if needed).
 
 ARG L4T_TAG=r35.4.1
 FROM dustynv/l4t-pytorch:${L4T_TAG}

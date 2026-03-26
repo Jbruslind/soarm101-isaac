@@ -73,6 +73,7 @@ echo "[2/5] Writing .env for Jetson..."
 ssh "$JETSON_HOST" "cat > $REMOTE_DIR/docker/.env" <<EOF
 L4T_TAG=$L4T_TAG
 OPENPI_PORT=8000
+OPENPI_POLICY_MODE=soarm
 OPENPI_POLICY_CONFIG=soarm_pi0_fast
 NVIDIA_VISIBLE_DEVICES=all
 EOF
