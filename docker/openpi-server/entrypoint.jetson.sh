@@ -22,10 +22,10 @@ case "$POLICY_MODE" in
             BASE_DIR="${OPENPI_BASE_CHECKPOINT_DIR:-}"
             if [ -z "$BASE_DIR" ]; then
                 case "$POLICY_CONFIG" in
-                    soarm_pi0_fast)
+                    soarm_pi0_fast|soarm_pi0_fast_bootstrap)
                         BASE_DIR="gs://openpi-assets/checkpoints/pi0_fast_base"
                         ;;
-                    soarm_pi0)
+                    soarm_pi0|soarm_pi0_bootstrap)
                         BASE_DIR="gs://openpi-assets/checkpoints/pi0_base"
                         ;;
                     *)
@@ -35,9 +35,15 @@ case "$POLICY_MODE" in
                         ;;
                 esac
             fi
+            POLICY_FOR_RUN="$POLICY_CONFIG"
+            case "$POLICY_CONFIG" in
+                soarm_pi0_fast) POLICY_FOR_RUN="soarm_pi0_fast_bootstrap" ;;
+                soarm_pi0) POLICY_FOR_RUN="soarm_pi0_bootstrap" ;;
+            esac
             echo "WARN: OPENPI_CHECKPOINT_DIR missing or not a directory ('${CHECKPOINT_DIR:-<empty>}')."
             echo "      Using pretrained base weights (no LoRA yet): $BASE_DIR"
-            CMD_ARGS="$CMD_ARGS policy:checkpoint --policy.config=$POLICY_CONFIG --policy.dir=$BASE_DIR"
+            echo "      OpenPi config for this run: $POLICY_FOR_RUN (Libero norm stats in base ckpt)"
+            CMD_ARGS="$CMD_ARGS policy:checkpoint --policy.config=$POLICY_FOR_RUN --policy.dir=$BASE_DIR"
         fi
         ;;
     droid)
@@ -100,6 +106,12 @@ if [ -z "$CHECKPOINT_DIR" ] || [ ! -d "$CHECKPOINT_DIR" ]; then
     else
         python3.11 scripts/preload_checkpoint.py || true
     fi
+fi
+
+if command -v uv >/dev/null 2>&1; then
+  uv run --python 3.11 scripts/register_soarm_configs.py
+else
+  python3.11 scripts/register_soarm_configs.py
 fi
 
 echo "Starting OpenPi server on port $PORT (Jetson)..."

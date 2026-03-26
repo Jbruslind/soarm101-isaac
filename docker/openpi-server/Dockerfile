@@ -30,6 +30,7 @@ EXPOSE 8000
 
 # Entrypoint: serve the policy model
 # Override OPENPI_POLICY_CONFIG and OPENPI_CHECKPOINT_DIR via env vars
+COPY scripts/register_soarm_configs.py /app/openpi/scripts/register_soarm_configs.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

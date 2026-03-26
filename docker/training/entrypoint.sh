@@ -20,6 +20,17 @@ if [ -d "/training/configs" ]; then
     cp -r /training/configs/*.py /app/openpi/src/openpi/training/ 2>/dev/null || true
 fi
 
+cd /app/openpi
+uv run python <<'PY'
+import openpi.training.config as cfg
+from openpi.training import soarm_config as sc
+
+for train_cfg in sc.SOARM_TRAIN_CONFIGS:
+    if train_cfg.name not in cfg._CONFIGS_DICT:
+        cfg._CONFIGS.append(train_cfg)
+        cfg._CONFIGS_DICT[train_cfg.name] = train_cfg
+PY
+
 mkdir -p "$CHECKPOINT_DIR"
 
 exec uv run scripts/train.py \

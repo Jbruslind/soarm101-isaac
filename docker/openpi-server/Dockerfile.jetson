@@ -43,6 +43,7 @@ WORKDIR /app/openpi
 # Overwrite serve_policy.py with Python 3.9–compatible version (match/case, TypeAlias) for fallback
 COPY scripts/serve_policy.py scripts/serve_policy.py
 COPY scripts/preload_checkpoint.py scripts/preload_checkpoint.py
+COPY scripts/register_soarm_configs.py scripts/register_soarm_configs.py
 
 # Use uv to install Python 3.11 and sync project deps (avoids flax/jax conflicts on 3.8)
 RUN uv python install 3.11 \
