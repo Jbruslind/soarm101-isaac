@@ -30,7 +30,7 @@ from openpi.training.config import (
 )
 
 
-_LIBERO_ASSET_ID = "physical-intelligence/libero"
+_LIBERO_ASSET_ID = "libero"
 
 
 @dataclasses.dataclass(frozen=True)
