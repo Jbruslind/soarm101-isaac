@@ -108,14 +108,8 @@ if [ -z "$CHECKPOINT_DIR" ] || [ ! -d "$CHECKPOINT_DIR" ]; then
     fi
 fi
 
-if command -v uv >/dev/null 2>&1; then
-  uv run --python 3.11 scripts/register_soarm_configs.py
-else
-  python3.11 scripts/register_soarm_configs.py
-fi
-
 echo "Starting OpenPi server on port $PORT (Jetson)..."
 if command -v uv >/dev/null 2>&1; then
-  exec uv run --python 3.11 scripts/serve_policy.py $CMD_ARGS
+  exec uv run --python 3.11 scripts/serve_policy_with_soarm.py $CMD_ARGS
 fi
-exec python3.11 scripts/serve_policy.py $CMD_ARGS
+exec python3.11 scripts/serve_policy_with_soarm.py $CMD_ARGS

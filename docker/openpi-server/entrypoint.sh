@@ -72,7 +72,6 @@ case "$POLICY_MODE" in
 esac
 
 cd /app/openpi
-uv run python scripts/register_soarm_configs.py
 
 echo "Starting OpenPi server on port $PORT..."
-exec uv run scripts/serve_policy.py $CMD_ARGS
+exec uv run scripts/serve_policy_with_soarm.py $CMD_ARGS

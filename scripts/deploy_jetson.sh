@@ -67,6 +67,7 @@ rsync -avz --progress \
     "$PROJECT_DIR/docker/openpi-server/scripts/serve_policy.py" \
     "$PROJECT_DIR/docker/openpi-server/scripts/preload_checkpoint.py" \
     "$PROJECT_DIR/docker/openpi-server/scripts/register_soarm_configs.py" \
+    "$PROJECT_DIR/docker/openpi-server/scripts/serve_policy_with_soarm.py" \
     "$JETSON_HOST:$REMOTE_DIR/docker/openpi-server/scripts/"
 
 # Write .env with L4T tag

@@ -44,6 +44,7 @@ WORKDIR /app/openpi
 COPY scripts/serve_policy.py scripts/serve_policy.py
 COPY scripts/preload_checkpoint.py scripts/preload_checkpoint.py
 COPY scripts/register_soarm_configs.py scripts/register_soarm_configs.py
+COPY scripts/serve_policy_with_soarm.py scripts/serve_policy_with_soarm.py
 
 # Use uv to install Python 3.11 and sync project deps (avoids flax/jax conflicts on 3.8)
 RUN uv python install 3.11 \
