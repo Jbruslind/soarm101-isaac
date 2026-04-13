@@ -1,0 +1,4 @@
+# Jetson: OpenPi and Caddy use host network, so proxy to localhost.
+:8443 {
+    reverse_proxy 127.0.0.1:8000
+}

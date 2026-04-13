@@ -1,0 +1,174 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Isaac Sim: Physics simulation + rendering for SO-ARM101
+  # Profiles: collect, eval-local, eval-remote, interactive
+  # ---------------------------------------------------------------------------
+  isaac-sim:
+    profiles: ["collect", "eval-local", "eval-remote", "interactive"]
+    build:
+      context: ./isaac-sim
+      dockerfile: Dockerfile
+    image: soarm-isaac-sim
+    container_name: soarm-isaac-sim
+    tty: true
+    stdin_open: true
+    runtime: nvidia
+    gpus: all
+    network_mode: host
+    environment:
+      - ACCEPT_EULA=${ACCEPT_EULA:-Y}
+      - PRIVACY_CONSENT=${PRIVACY_CONSENT:-Y}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - LIVESTREAM=${LIVESTREAM:-0}
+      - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/usr/local/share/middleware_profiles/rtps_udp_profile.xml
+      - ISAAC_SIM_HEADLESS=${ISAAC_SIM_HEADLESS:-1}
+    volumes:
+      - ../robot_description:/robot_description:ro
+      - ../isaac_envs:/isaac_envs:ro
+      - ../data:/data:rw
+      - ../.cursor:/.cursor:rw
+      - vla_signals:/tmp/vla_signals
+      - isaac-cache-kit:/isaac-sim/kit/cache
+      - isaac-cache-ov:/root/.cache/ov
+      - isaac-cache-pip:/root/.cache/pip
+      - isaac-cache-glcache:/root/.cache/nvidia/GLCache
+      - isaac-cache-compute:/root/.nv/ComputeCache
+      - isaac-logs:/root/.nvidia-omniverse/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # OpenPi Policy Server: VLA model inference via WebSocket
+  # Only started locally when using eval-local, deploy-local, or interactive
+  # ---------------------------------------------------------------------------
+  openpi-server:
+    profiles: ["eval-local", "deploy-local", "interactive"]
+    build:
+      context: ./openpi-server
+      dockerfile: Dockerfile
+    image: soarm-openpi
+    container_name: soarm-openpi-server
+    runtime: nvidia
+    network_mode: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - OPENPI_PORT=${OPENPI_PORT:-8000}
+      - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
+      - OPENPI_POLICY_CONFIG=${OPENPI_POLICY_CONFIG:-soarm_pi0_fast}
+      - OPENPI_CHECKPOINT_DIR=/models/soarm_lora
+    volumes:
+      - ../models:/models:ro
+      - ../training/configs:/app/openpi/src/openpi/training/configs_custom:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # ROS2 Bridge: Observation collection + action execution + OpenPi client
+  # Connects to OpenPi server at OPENPI_HOST (local container or remote cloud)
+  # ---------------------------------------------------------------------------
+  ros2-bridge:
+    profiles: ["collect", "eval-local", "eval-remote", "deploy-local", "deploy-remote", "interactive"]
+    build:
+      context: ./ros2-bridge
+      dockerfile: Dockerfile
+    image: soarm-ros2
+    container_name: soarm-ros2-bridge
+    network_mode: host
+    environment:
+      - OPENPI_HOST=${OPENPI_HOST:-localhost}
+      - OPENPI_PORT=${OPENPI_PORT:-8000}
+      - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      # Isaac Sim sets FASTRTPS_DEFAULT_PROFILES_FILE to UDP-only. The default Fast DDS
+      # stack may otherwise use shared memory for localhost peers; Isaac's subscriber
+      # then never sees /joint_commands. Force UDP so bridge ↔ Sim discovery matches.
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+    volumes:
+      - ../robot_description:/robot_description:ro
+      - ../ros2_ws:/ros2_ws:rw
+      - vla_signals:/tmp/vla_signals:ro
+    command: ["ros2", "run", "soarm_vla_bridge", "vla_bridge"]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Phospho Bridge: Web dashboard for remote robot control
+  # Provides a browser-based UI that relays commands to Isaac Sim via ROS2
+  # ---------------------------------------------------------------------------
+  phospho-bridge:
+    profiles: ["interactive"]
+    build:
+      context: ./phospho-bridge
+      dockerfile: Dockerfile
+    image: soarm-phospho-bridge
+    container_name: soarm-phospho-bridge
+    network_mode: host
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+      - PHOSPHO_BRIDGE_PORT=${PHOSPHO_BRIDGE_PORT:-8080}
+      # Optional: rotating file inside container (docker exec cat /tmp/phospho_bridge.log)
+      - PHOSPHO_BRIDGE_LOG_FILE=${PHOSPHO_BRIDGE_LOG_FILE:-/tmp/phospho_bridge.log}
+      - PHOSPHO_BRIDGE_LOG_LEVEL=${PHOSPHO_BRIDGE_LOG_LEVEL:-INFO}
+      - PHOSPHO_ROS_EXECUTOR_THREADS=${PHOSPHO_ROS_EXECUTOR_THREADS:-4}
+      - PHOSPHO_CAM_MIN_INTERVAL_SEC=${PHOSPHO_CAM_MIN_INTERVAL_SEC:-0.04}
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Training: LoRA/QLoRA fine-tuning of pi0/pi0-FAST
+  # Runs exclusively (no other GPU containers) in Mode A
+  # ---------------------------------------------------------------------------
+  training:
+    profiles: ["train"]
+    build:
+      context: ./training
+      dockerfile: Dockerfile
+    image: soarm-training
+    container_name: soarm-training
+    runtime: nvidia
+    network_mode: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - TRAINING_BATCH_SIZE=${TRAINING_BATCH_SIZE:-1}
+      - TRAINING_GRAD_ACCUM=${TRAINING_GRAD_ACCUM:-8}
+      - TRAINING_LORA_RANK=${TRAINING_LORA_RANK:-32}
+      - TRAINING_QUANTIZE_BASE=${TRAINING_QUANTIZE_BASE:-true}
+    volumes:
+      - ../data:/data:ro
+      - ../models:/models:rw
+      - ../training:/training:ro
+    shm_size: "16g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: "no"
+
+volumes:
+  isaac-cache-kit:
+  isaac-cache-ov:
+  isaac-cache-pip:
+  isaac-cache-glcache:
+  isaac-cache-compute:
+  isaac-logs:
+  vla_signals:  # shared so bridge can read prompt/enabled when Isaac Sim has no ROS2

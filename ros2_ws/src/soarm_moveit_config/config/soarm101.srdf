@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MoveIt2 SRDF for SO-ARM101.
+  TODO: Generate with MoveIt Setup Assistant once the full pipeline is running.
+-->
+<robot name="so101_new_calib">
+  <group name="arm">
+    <joint name="shoulder_pan"/>
+    <joint name="shoulder_lift"/>
+    <joint name="elbow_flex"/>
+    <joint name="wrist_flex"/>
+    <joint name="wrist_roll"/>
+  </group>
+  <group name="gripper">
+    <joint name="gripper"/>
+  </group>
+  <end_effector name="gripper_ee" parent_link="gripper_frame_link" group="gripper"/>
+</robot>

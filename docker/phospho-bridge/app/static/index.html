@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SO-ARM101 Remote Control</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --border: #30363d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --accent-green: #2ea043;
+    --accent-green-hover: #3fb950;
+    --accent-red: #da3633;
+    --accent-red-hover: #f85149;
+    --accent-blue: #388bfd;
+    --accent-orange: #d29922;
+    --accent-purple: #a371f7;
+    --radius: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+
+  header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent-red);
+    display: inline-block;
+    transition: background 0.3s;
+  }
+  .status-dot.connected { background: var(--accent-green); }
+
+  .status-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 16px;
+    padding: 16px 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .card-body { padding: 16px; }
+
+  /* Camera Panel */
+  .cameras {
+    grid-column: 1 / -1;
+  }
+
+  .camera-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  @media (max-width: 700px) {
+    .camera-grid { grid-template-columns: 1fr; }
+  }
+
+  .camera-feed {
+    position: relative;
+    background: #000;
+    border-radius: 6px;
+    overflow: hidden;
+    aspect-ratio: 1;
+  }
+
+  .camera-feed img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .camera-feed .camera-label {
+    position: absolute;
+    top: 8px; left: 8px;
+    background: rgba(0,0,0,0.7);
+    color: var(--text-primary);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .camera-feed .no-feed {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%; height: 100%;
+    color: var(--text-secondary);
+    font-size: 14px;
+    position: absolute;
+    top: 0; left: 0;
+  }
+
+  /* Joint Control Panel */
+  .joint-list { list-style: none; }
+
+  .joint-item {
+    display: grid;
+    grid-template-columns: 140px 1fr 70px;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+    border-radius: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .joint-item:last-child { border-bottom: none; }
+  .joint-item:hover { background: var(--bg-tertiary); }
+  .joint-item.selected { background: rgba(56, 139, 253, 0.15); border-left: 3px solid var(--accent-blue); }
+
+  .joint-name {
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .joint-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px; height: 20px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  .joint-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    outline: none;
+  }
+
+  .joint-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+    cursor: pointer;
+  }
+
+  .joint-value {
+    font-size: 13px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    text-align: right;
+    color: var(--text-secondary);
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .btn:hover { background: var(--border); }
+  .btn:active { transform: scale(0.97); }
+
+  .btn-green { background: var(--accent-green); border-color: var(--accent-green); }
+  .btn-green:hover { background: var(--accent-green-hover); }
+
+  .btn-red { background: var(--accent-red); border-color: var(--accent-red); }
+  .btn-red:hover { background: var(--accent-red-hover); }
+
+  .btn-orange { background: var(--accent-orange); border-color: var(--accent-orange); color: #000; }
+
+  .btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* VLA Panel */
+  .vla-prompt-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .vla-prompt-row input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+  }
+
+  .vla-prompt-row input:focus {
+    border-color: var(--accent-blue);
+  }
+
+  .vla-status {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-family: "SF Mono", "Fira Code", monospace;
+  }
+
+  /* Telemetry */
+  .telemetry-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .telemetry-item {
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+  }
+
+  .telemetry-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+
+  .telemetry-value {
+    font-size: 14px;
+    font-family: "SF Mono", "Fira Code", monospace;
+  }
+
+  /* Keyboard hints */
+  .hints {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.8;
+  }
+
+  .hints kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+  }
+
+  /* Gamepad indicator */
+  .gamepad-status {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+  }
+  .gamepad-status.active { color: var(--accent-green); }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    padding: 16px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    border-top: 1px solid var(--border);
+    margin-top: 16px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>
+    <span class="status-dot" id="statusDot"></span>
+    SO-ARM101 Remote Control
+  </h1>
+  <span class="status-text" id="statusText">Connecting...</span>
+</header>
+
+<div class="main-grid">
+
+  <!-- Camera feeds -->
+  <div class="card cameras">
+    <div class="card-header">Cameras</div>
+    <div class="card-body">
+      <div class="camera-grid">
+        <div class="camera-feed">
+          <span class="camera-label">Wrist</span>
+          <div class="no-feed" id="wristNoFeed">Waiting for feed...</div>
+          <img id="wristCam" src="/api/camera/wrist" alt="Wrist Camera"
+               onerror="this.style.display='none'; document.getElementById('wristNoFeed').style.display='flex';"
+               onload="this.style.display='block'; document.getElementById('wristNoFeed').style.display='none';">
+        </div>
+        <div class="camera-feed">
+          <span class="camera-label">Overhead</span>
+          <div class="no-feed" id="overheadNoFeed">Waiting for feed...</div>
+          <img id="overheadCam" src="/api/camera/overhead" alt="Overhead Camera"
+               onerror="this.style.display='none'; document.getElementById('overheadNoFeed').style.display='flex';"
+               onload="this.style.display='block'; document.getElementById('overheadNoFeed').style.display='none';">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Joint Control -->
+  <div class="card">
+    <div class="card-header">Joint Control</div>
+    <div class="card-body">
+      <ul class="joint-list" id="jointList"></ul>
+
+      <div class="btn-group" style="margin-top: 12px;">
+        <button class="btn" onclick="homePosition()">Home (H)</button>
+        <button class="btn btn-red" onclick="estop()">E-Stop (Esc)</button>
+      </div>
+
+      <div class="hints">
+        <kbd>1</kbd>-<kbd>6</kbd> select joint &nbsp;
+        <kbd>W</kbd>/<kbd>S</kbd> or <kbd>Up</kbd>/<kbd>Down</kbd> move joint &nbsp;
+        <kbd>Space</kbd> toggle gripper &nbsp;
+        <kbd>H</kbd> home &nbsp;
+        <kbd>Esc</kbd> e-stop
+      </div>
+
+      <div class="gamepad-status" id="gamepadStatus">No gamepad detected</div>
+    </div>
+  </div>
+
+  <!-- VLA Control -->
+  <div class="card">
+    <div class="card-header">VLA Inference</div>
+    <div class="card-body">
+      <div class="vla-prompt-row">
+        <input type="text" id="vlaPrompt" placeholder="Enter command (e.g., pick up the red cube)" value="pick up the red cube">
+        <button class="btn btn-green" onclick="vlaExecute()">Execute</button>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-orange" onclick="vlaStop()">Stop</button>
+        <button class="btn btn-red" onclick="estop()">E-Stop</button>
+      </div>
+      <div class="vla-status" id="vlaStatus">Status: Idle</div>
+
+      <!-- Telemetry inside VLA card -->
+      <div style="margin-top: 16px;">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-secondary);">Telemetry</div>
+        <div class="telemetry-grid" id="telemetryGrid"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  Phospho Bridge &middot; SO-ARM101 Isaac Sim &middot; <span id="fpsCounter">0</span> Hz telemetry
+</footer>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const JOINT_NAMES = [
+  "shoulder_pan", "shoulder_lift", "elbow_flex",
+  "wrist_flex", "wrist_roll", "gripper"
+];
+const NUM_JOINTS = 6;
+const STEP_RAD = 0.05;
+
+let selectedJoint = 0;
+let jointPositions = new Array(NUM_JOINTS).fill(0);
+let wsConnected = false;
+let vlaState = "idle";
+let gripperOpen = true;
+let keysDown = new Set();
+let controlInterval = null;
+let telemetryHz = 0;
+let telemetryCount = 0;
+let lastHzTime = Date.now();
+
+// ---------------------------------------------------------------------------
+// Build joint list UI
+// ---------------------------------------------------------------------------
+const jointList = document.getElementById("jointList");
+JOINT_NAMES.forEach((name, i) => {
+  const li = document.createElement("li");
+  li.className = "joint-item" + (i === 0 ? " selected" : "");
+  li.dataset.index = i;
+  li.innerHTML = `
+    <span class="joint-name">
+      <span class="joint-key">${i + 1}</span>
+      ${name}
+    </span>
+    <input type="range" class="joint-slider" min="-3.14" max="3.14" step="0.01"
+           value="0" data-joint="${i}"
+           oninput="onSliderChange(${i}, this.value)">
+    <span class="joint-value" id="jval${i}">0.000</span>
+  `;
+  li.addEventListener("click", () => selectJoint(i));
+  jointList.appendChild(li);
+});
+
+// Build telemetry grid
+const telemetryGrid = document.getElementById("telemetryGrid");
+JOINT_NAMES.forEach((name, i) => {
+  const div = document.createElement("div");
+  div.className = "telemetry-item";
+  div.innerHTML = `
+    <div class="telemetry-label">${name}</div>
+    <div class="telemetry-value" id="tval${i}">0.000 rad</div>
+  `;
+  telemetryGrid.appendChild(div);
+});
+
+// ---------------------------------------------------------------------------
+// Joint selection
+// ---------------------------------------------------------------------------
+function selectJoint(idx) {
+  selectedJoint = idx;
+  document.querySelectorAll(".joint-item").forEach((el, i) => {
+    el.classList.toggle("selected", i === idx);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Slider direct control
+// ---------------------------------------------------------------------------
+function onSliderChange(jointIdx, value) {
+  jointPositions[jointIdx] = parseFloat(value);
+  sendJointCommand();
+}
+
+// ---------------------------------------------------------------------------
+// API calls
+// ---------------------------------------------------------------------------
+async function sendJointCommand() {
+  try {
+    await fetch("/api/joints/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ positions: jointPositions })
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function homePosition() {
+  jointPositions.fill(0);
+  updateSliders();
+  try { await fetch("/api/joints/home", { method: "POST" }); } catch (e) { /* */ }
+  setVlaStatus("idle", "Status: Idle (Home)");
+}
+
+async function estop() {
+  try { await fetch("/api/vla/estop", { method: "POST" }); } catch (e) { /* */ }
+  setVlaStatus("stopped", "Status: E-STOPPED");
+}
+
+async function vlaExecute() {
+  const prompt = document.getElementById("vlaPrompt").value.trim();
+  if (!prompt) return;
+  try {
+    await fetch("/api/vla/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt })
+    });
+    setVlaStatus("executing", "Status: EXECUTING - " + prompt);
+  } catch (e) { /* */ }
+}
+
+async function vlaStop() {
+  try { await fetch("/api/vla/stop", { method: "POST" }); } catch (e) { /* */ }
+  setVlaStatus("stopped", "Status: STOPPED");
+}
+
+function setVlaStatus(state, text) {
+  vlaState = state;
+  const el = document.getElementById("vlaStatus");
+  el.textContent = text;
+  el.style.color = state === "executing" ? "var(--accent-green)"
+                 : state === "stopped" ? "var(--accent-red)"
+                 : "var(--text-secondary)";
+}
+
+// ---------------------------------------------------------------------------
+// Update UI from telemetry
+// ---------------------------------------------------------------------------
+function updateSliders() {
+  jointPositions.forEach((pos, i) => {
+    const slider = document.querySelector(`.joint-slider[data-joint="${i}"]`);
+    if (slider) slider.value = pos;
+    const val = document.getElementById(`jval${i}`);
+    if (val) val.textContent = pos.toFixed(3);
+    const tval = document.getElementById(`tval${i}`);
+    if (tval) tval.textContent = pos.toFixed(3) + " rad";
+  });
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket telemetry
+// ---------------------------------------------------------------------------
+function connectWebSocket() {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${protocol}//${location.host}/ws/telemetry`);
+
+  ws.onopen = () => {
+    wsConnected = true;
+    document.getElementById("statusDot").classList.add("connected");
+    document.getElementById("statusText").textContent = "Connected";
+  };
+
+  ws.onclose = () => {
+    wsConnected = false;
+    document.getElementById("statusDot").classList.remove("connected");
+    document.getElementById("statusText").textContent = "Disconnected - reconnecting...";
+    setTimeout(connectWebSocket, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      // stamp is set when at least one /joint_states message arrived from Isaac.
+      // Without this, zeros from the bridge overwrite sliders/commands every tick (no motion).
+      const haveSimJoints = data.stamp && data.positions && data.positions.length > 0;
+      if (haveSimJoints) {
+        if (keysDown.size === 0) {
+          for (let i = 0; i < Math.min(data.positions.length, NUM_JOINTS); i++) {
+            jointPositions[i] = data.positions[i];
+          }
+          updateSliders();
+        } else {
+          data.positions.forEach((pos, i) => {
+            const tval = document.getElementById(`tval${i}`);
+            if (tval) tval.textContent = pos.toFixed(3) + " rad";
+          });
+        }
+      }
+      telemetryCount++;
+    } catch (e) { /* */ }
+  };
+}
+
+// Hz counter
+setInterval(() => {
+  const now = Date.now();
+  const elapsed = (now - lastHzTime) / 1000;
+  telemetryHz = Math.round(telemetryCount / elapsed);
+  telemetryCount = 0;
+  lastHzTime = now;
+  document.getElementById("fpsCounter").textContent = telemetryHz;
+}, 2000);
+
+// ---------------------------------------------------------------------------
+// Keyboard control
+// ---------------------------------------------------------------------------
+function startContinuousControl() {
+  if (controlInterval) return;
+  controlInterval = setInterval(() => {
+    if (keysDown.size === 0) {
+      clearInterval(controlInterval);
+      controlInterval = null;
+      return;
+    }
+
+    let changed = false;
+
+    if (keysDown.has("KeyW") || keysDown.has("ArrowUp")) {
+      jointPositions[selectedJoint] = Math.min(3.14, jointPositions[selectedJoint] + STEP_RAD);
+      changed = true;
+    }
+    if (keysDown.has("KeyS") || keysDown.has("ArrowDown")) {
+      jointPositions[selectedJoint] = Math.max(-3.14, jointPositions[selectedJoint] - STEP_RAD);
+      changed = true;
+    }
+
+    if (changed) {
+      updateSliders();
+      sendJointCommand();
+    }
+  }, 50); // 20 Hz control rate
+}
+
+document.addEventListener("keydown", (e) => {
+  // Don't capture when typing in the prompt field
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      vlaExecute();
+    }
+    return;
+  }
+
+  // Joint selection
+  if (e.key >= "1" && e.key <= "6") {
+    selectJoint(parseInt(e.key) - 1);
+    return;
+  }
+
+  switch (e.code) {
+    case "KeyW":
+    case "ArrowUp":
+    case "KeyS":
+    case "ArrowDown":
+      e.preventDefault();
+      keysDown.add(e.code);
+      startContinuousControl();
+      break;
+
+    case "Space":
+      e.preventDefault();
+      gripperOpen = !gripperOpen;
+      jointPositions[5] = gripperOpen ? 0.8 : 0.0;
+      updateSliders();
+      sendJointCommand();
+      break;
+
+    case "KeyH":
+      homePosition();
+      break;
+
+    case "Escape":
+      estop();
+      break;
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  keysDown.delete(e.code);
+});
+
+// ---------------------------------------------------------------------------
+// Gamepad support
+// ---------------------------------------------------------------------------
+let gamepadConnected = false;
+let gamepadPollInterval = null;
+
+window.addEventListener("gamepadconnected", (e) => {
+  gamepadConnected = true;
+  const el = document.getElementById("gamepadStatus");
+  el.textContent = "Gamepad: " + e.gamepad.id;
+  el.classList.add("active");
+  if (!gamepadPollInterval) {
+    gamepadPollInterval = setInterval(pollGamepad, 50);
+  }
+});
+
+window.addEventListener("gamepaddisconnected", () => {
+  gamepadConnected = false;
+  const el = document.getElementById("gamepadStatus");
+  el.textContent = "No gamepad detected";
+  el.classList.remove("active");
+  if (gamepadPollInterval) {
+    clearInterval(gamepadPollInterval);
+    gamepadPollInterval = null;
+  }
+});
+
+function pollGamepad() {
+  const gamepads = navigator.getGamepads();
+  if (!gamepads) return;
+
+  const gp = gamepads[0];
+  if (!gp) return;
+
+  let changed = false;
+
+  // Left stick Y (axis 1) -> move selected joint
+  const ly = gp.axes[1];
+  if (Math.abs(ly) > 0.15) {
+    jointPositions[selectedJoint] = Math.max(-3.14, Math.min(3.14,
+      jointPositions[selectedJoint] - ly * STEP_RAD
+    ));
+    changed = true;
+  }
+
+  // D-pad up/down (buttons 12/13) -> select joint
+  if (gp.buttons[12] && gp.buttons[12].pressed) selectJoint(Math.max(0, selectedJoint - 1));
+  if (gp.buttons[13] && gp.buttons[13].pressed) selectJoint(Math.min(NUM_JOINTS - 1, selectedJoint + 1));
+
+  // A button (0) -> execute VLA
+  if (gp.buttons[0] && gp.buttons[0].pressed) vlaExecute();
+
+  // B button (1) -> stop VLA
+  if (gp.buttons[1] && gp.buttons[1].pressed) vlaStop();
+
+  // Start button (9) -> home
+  if (gp.buttons[9] && gp.buttons[9].pressed) homePosition();
+
+  // Right trigger (7) -> toggle gripper
+  if (gp.buttons[7] && gp.buttons[7].pressed) {
+    gripperOpen = !gripperOpen;
+    jointPositions[5] = gripperOpen ? 0.8 : 0.0;
+    changed = true;
+  }
+
+  if (changed) {
+    updateSliders();
+    sendJointCommand();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+connectWebSocket();
+updateSliders();
+</script>
+
+</body>
+</html>

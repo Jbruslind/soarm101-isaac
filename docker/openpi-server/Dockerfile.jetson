@@ -1,0 +1,52 @@
+# OpenPi server for NVIDIA Jetson (Xavier / Orin) with JetPack 5 or 6.
+#
+# The standard Dockerfile uses nvidia/cuda:12.4 (x86_64) which is
+# incompatible with Jetson's L4T (ARM64) software stack.  This file
+# uses dusty-nv's community L4T-PyTorch images that ship pre-built
+# PyTorch wheels matched to each JetPack release.
+#
+# Build args (pick ONE matching your JetPack version):
+#   JetPack 5.1.2 (Xavier / Orin):
+#     --build-arg L4T_TAG=r35.4.1
+#   JetPack 6.0+ (Orin only):
+#     --build-arg L4T_TAG=r36.3.0
+#
+# Usage:
+#   docker build -f Dockerfile.jetson \
+#       --build-arg L4T_TAG=r35.4.1 \
+#       -t soarm-openpi-jetson .
+
+ARG L4T_TAG=r35.4.1
+FROM dustynv/l4t-pytorch:${L4T_TAG}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv (manages Python 3.11 + deps; OpenPi requires >=3.11, L4T base is 3.8)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Clone OpenPi
+WORKDIR /app
+RUN git clone --depth 1 https://github.com/Physical-Intelligence/openpi.git
+
+WORKDIR /app/openpi
+
+# Overwrite serve_policy.py with Python 3.9–compatible version (match/case, TypeAlias) for fallback
+COPY scripts/serve_policy.py scripts/serve_policy.py
+COPY scripts/preload_checkpoint.py scripts/preload_checkpoint.py
+
+# Use uv to install Python 3.11 and sync project deps (avoids flax/jax conflicts on 3.8)
+RUN uv python install 3.11 \
+    && (uv sync --python 3.11 --extra server || uv sync --python 3.11)
+
+EXPOSE 8000
+
+COPY entrypoint.jetson.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+CMD ["/entrypoint.sh"]
