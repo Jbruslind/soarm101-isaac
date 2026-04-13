@@ -20,12 +20,11 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - OPENPI_PORT=${OPENPI_PORT:-8000}
-      - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
       - OPENPI_POLICY_CONFIG=${OPENPI_POLICY_CONFIG:-soarm_pi0_fast}
       - OPENPI_CHECKPOINT_DIR=/models/soarm_lora
     volumes:
-      - ../models:/models:ro
-      - ../training/configs:/app/openpi/src/openpi/training/configs_custom:ro
+      - ./models:/models:ro
+      - ./training/configs:/app/openpi/src/openpi/training/configs_custom:ro
     networks:
       - gpunet
     deploy:
@@ -73,9 +72,9 @@ services:
       - TRAINING_LORA_RANK=${TRAINING_LORA_RANK:-32}
       - TRAINING_QUANTIZE_BASE=${TRAINING_QUANTIZE_BASE:-false}
     volumes:
-      - ../data:/data:ro
-      - ../models:/models:rw
-      - ../training:/training:ro
+      - ./data:/data:ro
+      - ./models:/models:rw
+      - ./training:/training:ro
     shm_size: "16g"
     networks:
       - gpunet

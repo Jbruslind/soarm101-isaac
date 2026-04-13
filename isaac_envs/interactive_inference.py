@@ -50,6 +50,7 @@ import omni.usd
 import omni.ui as ui
 import omni.graph.core as og
 import omni.kit.app
+import omni.timeline
 from pxr import Usd, UsdGeom, Gf, Sdf
 
 import isaaclab.sim as sim_utils
@@ -74,13 +75,139 @@ NUM_JOINTS = 6
 EE_BODY_NAME = "gripper_frame_link"
 ROBOT_USD_PATH = "/robot_description/usd/soarm101.usd"
 ROBOT_PRIM_PATH = "/World/Robot/so101_new_calib"
+# PhysX/ROS2 nodes often need the *actual* articulation-root prim (can be a descendant of ROBOT_PRIM_PATH).
+ROBOT_ARTICULATION_PRIM_PATH = ROBOT_PRIM_PATH
+# Camera/link attachments should stay on the robot model hierarchy (not articulation-root fallback).
+ROBOT_MODEL_PRIM_PATH = ROBOT_PRIM_PATH
 
 # Execution states
 STATE_IDLE = "IDLE"
 STATE_EXECUTING = "EXECUTING"
 STATE_STOPPED = "STOPPED"
 
-DEFAULT_TIMEOUT = 30  # seconds
+# Auto-stop after Execute: must exceed worst-case first OpenPi RTT (often 60–120s+ on remote/Jetson).
+# Override: VLA_AUTO_STOP_SEC=300 ./scripts/interactive_test.sh  (or panel "Auto-stop (sec)")
+_AUTO_STOP_ENV = "VLA_AUTO_STOP_SEC"
+AUTO_STOP_MIN_SEC = 5
+AUTO_STOP_MAX_SEC = 900  # UI clamp; remote inference can be very slow
+
+
+def _default_auto_stop_sec() -> int:
+    raw = os.environ.get(_AUTO_STOP_ENV, "120")
+    try:
+        v = int(raw)
+    except ValueError:
+        return 120
+    return max(AUTO_STOP_MIN_SEC, min(AUTO_STOP_MAX_SEC, v))
+
+
+DEFAULT_TIMEOUT = _default_auto_stop_sec()
+
+
+def _create_camera_debug_frustum(
+    stage: Usd.Stage,
+    camera_prim_path: str,
+    *,
+    depth_m: float = 0.18,
+    line_width: float = 0.003,
+    color: tuple[float, float, float] = (1.0, 0.65, 0.1),
+) -> None:
+    """Create a lightweight wireframe frustum as a child of a camera prim.
+
+    This is a viewport/debug aid for Isaac Sim 5.1 when the built-in camera
+    frustum gizmo is not visible. Since it is parented under the camera prim,
+    it follows the camera automatically (including wrist camera motion).
+    """
+    cam_prim = stage.GetPrimAtPath(camera_prim_path)
+    if not cam_prim.IsValid():
+        print(f"[WARN] Cannot create debug frustum; camera prim not found: {camera_prim_path}", flush=True)
+        return
+
+    # Use camera intrinsics when available so frustum shape reflects FOV.
+    cam = UsdGeom.Camera(cam_prim)
+    focal = cam.GetFocalLengthAttr().Get() if cam else None
+    h_ap = cam.GetHorizontalApertureAttr().Get() if cam else None
+    v_ap = cam.GetVerticalApertureAttr().Get() if cam else None
+    if focal is None or focal <= 1e-6:
+        focal = 1.93
+    if h_ap is None or h_ap <= 1e-6:
+        h_ap = 2.65
+    if v_ap is None or v_ap <= 1e-6:
+        v_ap = h_ap
+
+    half_w = max(0.01, depth_m * (h_ap / (2.0 * focal)))
+    half_h = max(0.01, depth_m * (v_ap / (2.0 * focal)))
+
+    # USD camera looks down -Z in local space.
+    p0 = Gf.Vec3f(0.0, 0.0, 0.0)
+    p1 = Gf.Vec3f(+half_w, +half_h, -depth_m)
+    p2 = Gf.Vec3f(-half_w, +half_h, -depth_m)
+    p3 = Gf.Vec3f(-half_w, -half_h, -depth_m)
+    p4 = Gf.Vec3f(+half_w, -half_h, -depth_m)
+
+    frustum_path = f"{camera_prim_path}/debug_frustum"
+    if stage.GetPrimAtPath(frustum_path).IsValid():
+        stage.RemovePrim(frustum_path)
+
+    curves = UsdGeom.BasisCurves.Define(stage, frustum_path)
+    curves.CreateTypeAttr("linear")
+    # 8 independent line segments:
+    # 4 rays from origin to far plane corners + 4 far-plane rectangle edges.
+    curves.CreateCurveVertexCountsAttr([2, 2, 2, 2, 2, 2, 2, 2])
+    curves.CreatePointsAttr([
+        p0, p1,
+        p0, p2,
+        p0, p3,
+        p0, p4,
+        p1, p2,
+        p2, p3,
+        p3, p4,
+        p4, p1,
+    ])
+    curves.CreateWidthsAttr([line_width])
+    UsdGeom.Gprim(curves.GetPrim()).CreateDisplayColorAttr([Gf.Vec3f(*color)])
+    UsdGeom.Imageable(curves.GetPrim()).CreatePurposeAttr().Set(UsdGeom.Tokens.guide)
+
+    print(f"[INFO] Added camera debug frustum: {frustum_path}", flush=True)
+
+
+def _force_exact_camera_world_transform(
+    stage: Usd.Stage,
+    camera_prim_path: str,
+    pos_xyz: tuple[float, float, float],
+    euler_xyz_deg: tuple[float, float, float],
+) -> None:
+    """Author an exact world-space camera transform with no inherited offsets.
+
+    This clears existing xform ops and sets resetXformStack so the authored
+    translate/orient on the camera prim is the exact final transform seen in Sim.
+    """
+    prim = stage.GetPrimAtPath(camera_prim_path)
+    if not prim.IsValid():
+        print(f"[WARN] Cannot force camera transform; prim not found: {camera_prim_path}", flush=True)
+        return
+
+    quat_wxyz = _euler_xyz_to_quat_wxyz(*euler_xyz_deg)
+    xform = UsdGeom.Xformable(prim)
+    xform.ClearXformOpOrder()
+    xform.SetResetXformStack(True)
+    t_op = xform.AddTranslateOp(precision=UsdGeom.XformOp.PrecisionDouble)
+    r_op = xform.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble)
+    t_op.Set(Gf.Vec3d(float(pos_xyz[0]), float(pos_xyz[1]), float(pos_xyz[2])))
+    r_op.Set(Gf.Quatd(float(quat_wxyz[0]), Gf.Vec3d(float(quat_wxyz[1]), float(quat_wxyz[2]), float(quat_wxyz[3]))))
+    print(
+        f"[INFO] Forced exact camera world transform on {camera_prim_path}: "
+        f"pos={pos_xyz}, euler_deg={euler_xyz_deg}",
+        flush=True,
+    )
+
+
+def _remove_ros2_bridge_graph():
+    """Delete a partially-created OmniGraph if a previous attempt left it behind."""
+    stage = omni.usd.get_context().get_stage()
+    graph_prim = stage.GetPrimAtPath("/World/ROS2Bridge")
+    if graph_prim.IsValid():
+        stage.RemovePrim(graph_prim.GetPath())
 
 
 def _euler_xyz_to_quat_wxyz(rx_deg: float, ry_deg: float, rz_deg: float) -> tuple[float, float, float, float]:
@@ -135,6 +262,7 @@ def _setup_scene(sim: SimulationContext):
     only one SO-ARM101 is visible. The wrist camera is parented to
     gripper_frame_link and moves with the end-effector.
     """
+    global ROBOT_ARTICULATION_PRIM_PATH, ROBOT_MODEL_PRIM_PATH
     stage = omni.usd.get_context().get_stage()
 
     # -- Robot USD --
@@ -187,6 +315,43 @@ def _setup_scene(sim: SimulationContext):
         if deactivated:
             print(f"[INFO] Deactivated {deactivated} duplicate robot prim(s) (kept so101_new_calib).", flush=True)
 
+    # Resolve the actual articulation-root prim path to use for PhysX/ROS2.
+    # In some imported USDs, /World/Robot/so101_new_calib is an Xform container,
+    # while the articulation root is a descendant prim.
+    try:
+        from pxr import UsdPhysics
+        _resolved = None
+
+        # Prefer the active child under /World/Robot that matches the expected name.
+        _robot_root = stage.GetPrimAtPath("/World/Robot")
+        _preferred = None
+        if _robot_root.IsValid():
+            for _c in _robot_root.GetChildren():
+                if _c.IsActive() and _c.GetName() == "so101_new_calib":
+                    _preferred = _c
+                    break
+
+        # Search for the first active prim that has ArticulationRootAPI applied.
+        _search_root = _preferred if _preferred is not None else stage.GetPrimAtPath(ROBOT_PRIM_PATH)
+        if _search_root.IsValid():
+            for _p in Usd.PrimRange(_search_root):
+                if _p.IsActive() and _p.HasAPI(UsdPhysics.ArticulationRootAPI):
+                    _resolved = str(_p.GetPath())
+                    break
+        if _resolved is None:
+            # Fallback: best effort
+            _resolved = ROBOT_PRIM_PATH
+
+        # Update global and cfg so everything uses the true articulation root.
+        ROBOT_ARTICULATION_PRIM_PATH = _resolved
+        if _preferred is not None:
+            ROBOT_MODEL_PRIM_PATH = str(_preferred.GetPath())
+        else:
+            ROBOT_MODEL_PRIM_PATH = ROBOT_PRIM_PATH
+        robot_cfg.prim_path = _resolved
+    except Exception:
+        pass
+
     saved_spawn = robot_cfg.spawn
     robot_cfg.spawn = None
     robot = Articulation(robot_cfg)
@@ -212,24 +377,26 @@ def _setup_scene(sim: SimulationContext):
     stage.DefinePrim("/World/Cameras", "Xform")
 
     # 1) Wrist (gripper) camera: under the robot so it moves with the end-effector.
-    #    Position (-0.09, 0, -0.075) m, rotation (-180, -32, -180) deg (x,y,z) → quat (w,x,y,z).
+    #    Position (-0.03, 0.05, -0.09) m under gripper_frame_link.
+    #    Rotation remains as configured below unless explicitly changed.
     #    In the Stage panel it appears under World > Robot > so101_new_calib > gripper_frame_link > wrist_cam.
+    _wrist_cam_prim = f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"
     wrist_cam = Camera(CameraCfg(
-        prim_path=f"{ROBOT_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam",
+        prim_path=_wrist_cam_prim,
         update_period=0.0333,
         height=224, width=224,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=1.93, horizontal_aperture=2.65),
         offset=CameraCfg.OffsetCfg(
-            pos=(-0.09, 0.0, -0.075),
+            pos=(-0.03, 0.05, -0.09),
             rot=(-0.275637, 0.0, 0.961262, 0.0),  # Euler (-180, -32, -180) deg (x,y,z)
             convention="world",
         ),
     ))
 
-    # 2) Overhead camera: at (0, 0, 0.8474) m, rotation Euler (rx, ry, rz) = (0, -20, 0) deg.
-    # Quat computed explicitly via _euler_xyz_to_quat_wxyz to avoid hand-calculation errors.
-    # World convention: +X forward, +Z up. If angle still looks wrong in Sim, try convention="opengl".
+    # 2) Overhead camera: exact transform requested for Isaac Sim camera prim:
+    #    Translate = (0.1, 0.0, 0.8), Orient (Euler XYZ deg) = (0, -20, 0).
+    # Keep convention="world" so this is applied as a direct world-space camera pose.
     _overhead_euler_deg = (0.0, -20.0, 0.0)
     _overhead_quat = _euler_xyz_to_quat_wxyz(*_overhead_euler_deg)
     _norm = math.sqrt(sum(x * x for x in _overhead_quat))
@@ -244,11 +411,24 @@ def _setup_scene(sim: SimulationContext):
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(focal_length=1.93, horizontal_aperture=2.65),
         offset=CameraCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.8474),
+            pos=(0.1, 0.0, 0.8),
             rot=_overhead_quat,
             convention="world",
         ),
     ))
+
+    # Force exact authored transform on the camera prim so no additional xform ops
+    # or inherited parent transforms alter the requested pose.
+    _force_exact_camera_world_transform(
+        stage,
+        "/World/Cameras/overhead_cam",
+        (0.1, 0.0, 0.8),
+        (0.0, -20.0, 0.0),
+    )
+
+    # Debug frustum line meshes (workaround for missing camera FOV gizmos in some Isaac Sim 5.1 views).
+    _create_camera_debug_frustum(stage, _wrist_cam_prim)
+    _create_camera_debug_frustum(stage, "/World/Cameras/overhead_cam")
 
     return robot, wrist_cam, overhead_cam
 
@@ -271,112 +451,213 @@ def _setup_ros2_bridge():
     Also creates helper graphs for /vla/prompt and /vla/enabled publishing
     which are driven by the omni.ui callbacks via global state.
     """
-    # #region agent log f1832b
-    import json as _json_dbg, time as _time_dbg, glob as _glob_dbg, os as _os_dbg
-    _DEBUG_LOG = "/.cursor/debug-f1832b.log"
-
-    def _dbg(msg, data, hyp, run_id="run1"):
-        entry = {
-            "sessionId": "f1832b",
-            "id": f"log_{int(_time_dbg.time()*1000)}",
-            "timestamp": int(_time_dbg.time()*1000),
-            "location": "interactive_inference.py:_setup_ros2_bridge",
-            "message": msg, "data": data, "runId": run_id, "hypothesisId": hyp,
-        }
+    # Programmatically enable the extension via Kit's extension manager.
+    # On first run this will auto-download from NVIDIA's extension registry
+    # into the persistent isaac-cache-kit volume.
+    for _ext_id in ("isaacsim.ros2.bridge", "omni.isaac.ros2_bridge"):
         try:
-            with open(_DEBUG_LOG, "a") as _fh:
-                _fh.write(_json_dbg.dumps(entry) + "\n")
+            import omni.kit.app as _kit_app_en
+            _em = _kit_app_en.get_app().get_extension_manager()
+            if not _em.is_extension_enabled(_ext_id):
+                _em.set_extension_enabled_immediate(_ext_id, True)
+            break
         except Exception:
             pass
 
-    # Hyp A/D: check if ROS2 is installed at all
-    ros_humble_exists = _os_dbg.path.isdir("/opt/ros/humble")
-    ros_env_vars = {k: v for k, v in _os_dbg.environ.items() if "ROS" in k or "RMW" in k or "AMENT" in k}
-    _dbg("ROS2 environment check", {"ros_humble_exists": ros_humble_exists, "ros_env_vars": ros_env_vars}, "A_D")
-
-    # Hyp B/C: check extension presence in extscache for both naming conventions
-    old_ext_dirs = _glob_dbg.glob("/isaac-sim/extscache/omni.isaac.ros2_bridge*")
-    new_ext_dirs = _glob_dbg.glob("/isaac-sim/extscache/isaacsim.ros2.bridge*")
-    _dbg("Extension directory probe", {
-        "omni_isaac_ros2_bridge_dirs": old_ext_dirs,
-        "isaacsim_ros2_bridge_dirs": new_ext_dirs,
-    }, "B_C")
-
-    # Hyp B: try the new Isaac Sim 5.x extension name directly
-    new_name_error = None
     try:
         import isaacsim.ros2.bridge  # noqa: F401
-        _dbg("isaacsim.ros2.bridge import SUCCESS", {}, "B")
-    except Exception as new_name_exc:
-        new_name_error = str(new_name_exc)
-        _dbg("isaacsim.ros2.bridge import FAILED", {"error": new_name_error}, "B")
+        _bridge_ext_loaded = True
+    except Exception:
+        _bridge_ext_loaded = False
 
-    # Hyp C: check extensions manager for currently loaded/registered extensions
-    try:
-        import omni.kit.app as _kit_app
-        ext_mgr = _kit_app.get_app().get_extension_manager()
-        ros2_exts = [e for e in ext_mgr.get_extensions() if "ros2" in e.get("id", "").lower()]
-        _dbg("Kit extension manager ros2 entries", {"ros2_extensions": ros2_exts}, "C")
-    except Exception as ext_mgr_exc:
-        _dbg("Kit extension manager query failed", {"error": str(ext_mgr_exc)}, "C")
-
-    # Original import attempt (Hyp B: old name)
+    # Try old name if new name failed (fallback for older Isaac Sim builds)
     try:
         import omni.isaac.ros2_bridge  # noqa: F401 – triggers extension load
-    except (ImportError, ModuleNotFoundError) as old_name_exc:
-        _dbg("omni.isaac.ros2_bridge import FAILED (old name)", {"error": str(old_name_exc)}, "B")
-        print("[WARN] omni.isaac.ros2_bridge not available – ROS2 topics disabled.", flush=True)
-        return
-    # #endregion
+    except (ImportError, ModuleNotFoundError):
+        if not _bridge_ext_loaded:
+            print("[WARN] omni.isaac.ros2_bridge not available – ROS2 topics disabled.", flush=True)
+            return
+
+    # Determine which OmniGraph node type prefix to use based on what loaded
+    _og_prefix = "isaacsim.ros2.bridge" if _bridge_ext_loaded else "omni.isaac.ros2_bridge"
 
     keys = og.Controller.Keys
 
+    _cn_prefix = "isaacsim.core.nodes"
+
     # -- Main action graph --
-    (graph, nodes, _, _) = og.Controller.edit(
-        {"graph_path": "/World/ROS2Bridge", "evaluator_name": "execution"},
-        {
-            keys.CREATE_NODES: [
-                ("tick", "omni.graph.action.OnPlaybackTick"),
-                ("sim_time", "omni.isaac.core_nodes.IsaacReadSimulationTime"),
-                # Joint state publisher
-                ("read_joint", "omni.isaac.core_nodes.IsaacArticulationController"),
-                ("pub_joint", "omni.isaac.ros2_bridge.ROS2PublishJointState"),
-                # Joint command subscriber
-                ("sub_joint_cmd", "omni.isaac.ros2_bridge.ROS2SubscribeJointState"),
-                ("art_ctrl", "omni.isaac.core_nodes.IsaacArticulationController"),
-                # Camera publishers
-                ("cam_wrist_helper", "omni.isaac.ros2_bridge.ROS2CameraHelper"),
-                ("cam_overhead_helper", "omni.isaac.ros2_bridge.ROS2CameraHelper"),
-            ],
-            keys.SET_VALUES: [
-                ("pub_joint.inputs:topicName", "/joint_states"),
-                ("pub_joint.inputs:targetPrim", ROBOT_PRIM_PATH),
-                ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
-                ("art_ctrl.inputs:targetPrim", ROBOT_PRIM_PATH),
-                ("art_ctrl.inputs:robotPath", ROBOT_PRIM_PATH),
-                ("cam_wrist_helper.inputs:topicName", "/camera/wrist/image_raw"),
-                ("cam_wrist_helper.inputs:renderProductPath",
-                 f"{ROBOT_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"),
-                ("cam_wrist_helper.inputs:type", "rgb"),
-                ("cam_overhead_helper.inputs:topicName", "/camera/overhead/image_raw"),
-                ("cam_overhead_helper.inputs:renderProductPath",
-                 "/World/Cameras/overhead_cam"),
-                ("cam_overhead_helper.inputs:type", "rgb"),
-            ],
-            keys.CONNECT: [
-                ("tick.outputs:tick", "sim_time.inputs:execIn"),
-                ("tick.outputs:tick", "pub_joint.inputs:execIn"),
-                ("tick.outputs:tick", "sub_joint_cmd.inputs:execIn"),
-                ("tick.outputs:tick", "cam_wrist_helper.inputs:execIn"),
-                ("tick.outputs:tick", "cam_overhead_helper.inputs:execIn"),
-                ("sim_time.outputs:simulationTime", "pub_joint.inputs:timeStamp"),
-                ("sub_joint_cmd.outputs:jointNames", "art_ctrl.inputs:jointNames"),
-                ("sub_joint_cmd.outputs:positionCommand", "art_ctrl.inputs:positionCommand"),
-                ("sub_joint_cmd.outputs:execOut", "art_ctrl.inputs:execIn"),
-            ],
-        },
-    )
-    print("[INFO] OmniGraph ROS2 bridge created.", flush=True)
+    # Create + connect in a single edit call (avoids graph wrap issues).
+    # Isaac Sim 5.x: IsaacReadSimulationTime no longer exposes inputs:swhFrameNumber (see OgnIsaacReadSimulationTime
+    # in isaacsim.core.nodes docs). Omitting that wire uses default behavior (latest simulation time on the output).
+    ros2_graph_mode = os.environ.get("ROS2_GRAPH_MODE", "soarm").strip().lower()
+    if ros2_graph_mode not in ("soarm", "minimal"):
+        ros2_graph_mode = "soarm"
+    print(f"[INFO] ROS2 graph mode: {ros2_graph_mode}", flush=True)
+    _remove_ros2_bridge_graph()
+    try:
+        if ros2_graph_mode == "minimal":
+            # Minimal tutorial-style graph: joint pub/sub + articulation control only.
+            (graph, nodes, _, _) = og.Controller.edit(
+                {"graph_path": "/World/ROS2Bridge", "evaluator_name": "execution"},
+                {
+                    keys.CREATE_NODES: [
+                        ("tick", "omni.graph.action.OnPlaybackTick"),
+                        ("sim_time", f"{_cn_prefix}.IsaacReadSimulationTime"),
+                        ("pub_joint", f"{_og_prefix}.ROS2PublishJointState"),
+                        ("sub_joint_cmd", f"{_og_prefix}.ROS2SubscribeJointState"),
+                        ("art_ctrl", f"{_cn_prefix}.IsaacArticulationController"),
+                    ],
+                    keys.SET_VALUES: [
+                        ("pub_joint.inputs:topicName", "/joint_states"),
+                        ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
+                        ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                        ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
+                    ],
+                    keys.CONNECT: [
+                        ("tick.outputs:tick", "pub_joint.inputs:execIn"),
+                        ("tick.outputs:tick", "sub_joint_cmd.inputs:execIn"),
+                        ("tick.outputs:tick", "art_ctrl.inputs:execIn"),
+                        ("sim_time.outputs:simulationTime", "pub_joint.inputs:timeStamp"),
+                        ("sub_joint_cmd.outputs:jointNames", "art_ctrl.inputs:jointNames"),
+                        ("sub_joint_cmd.outputs:positionCommand", "art_ctrl.inputs:positionCommand"),
+                        ("sub_joint_cmd.outputs:velocityCommand", "art_ctrl.inputs:velocityCommand"),
+                        ("sub_joint_cmd.outputs:effortCommand", "art_ctrl.inputs:effortCommand"),
+                    ],
+                },
+            )
+        else:
+            (graph, nodes, _, _) = og.Controller.edit(
+                {"graph_path": "/World/ROS2Bridge", "evaluator_name": "execution"},
+                {
+                    keys.CREATE_NODES: [
+                        ("tick", "omni.graph.action.OnPlaybackTick"),
+                        ("sim_time", f"{_cn_prefix}.IsaacReadSimulationTime"),
+                        ("pub_joint", f"{_og_prefix}.ROS2PublishJointState"),
+                        ("sub_joint_cmd", f"{_og_prefix}.ROS2SubscribeJointState"),
+                        ("art_ctrl", f"{_cn_prefix}.IsaacArticulationController"),
+                        ("rp_wrist", f"{_cn_prefix}.IsaacCreateRenderProduct"),
+                        ("rp_overhead", f"{_cn_prefix}.IsaacCreateRenderProduct"),
+                        ("cam_wrist_helper", f"{_og_prefix}.ROS2CameraHelper"),
+                        ("cam_overhead_helper", f"{_og_prefix}.ROS2CameraHelper"),
+                    ],
+                    keys.SET_VALUES: [
+                        ("pub_joint.inputs:topicName", "/joint_states"),
+                        ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
+                        ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                        ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
+                        ("cam_wrist_helper.inputs:topicName", "/camera/wrist/image_raw"),
+                        ("cam_wrist_helper.inputs:type", "rgb"),
+                        ("cam_overhead_helper.inputs:topicName", "/camera/overhead/image_raw"),
+                        ("cam_overhead_helper.inputs:type", "rgb"),
+                        ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"),
+                        ("rp_wrist.inputs:width", 224),
+                        ("rp_wrist.inputs:height", 224),
+                        ("rp_overhead.inputs:cameraPrim", "/World/Cameras/overhead_cam"),
+                        ("rp_overhead.inputs:width", 224),
+                        ("rp_overhead.inputs:height", 224),
+                    ],
+                    keys.CONNECT: [
+                        ("tick.outputs:tick", "pub_joint.inputs:execIn"),
+                        ("tick.outputs:tick", "sub_joint_cmd.inputs:execIn"),
+                        ("tick.outputs:tick", "rp_wrist.inputs:execIn"),
+                        ("tick.outputs:tick", "rp_overhead.inputs:execIn"),
+                        ("rp_wrist.outputs:execOut", "cam_wrist_helper.inputs:execIn"),
+                        ("rp_overhead.outputs:execOut", "cam_overhead_helper.inputs:execIn"),
+                        ("rp_wrist.outputs:renderProductPath", "cam_wrist_helper.inputs:renderProductPath"),
+                        ("rp_overhead.outputs:renderProductPath", "cam_overhead_helper.inputs:renderProductPath"),
+                        ("sim_time.outputs:simulationTime", "pub_joint.inputs:timeStamp"),
+                        ("sub_joint_cmd.outputs:jointNames", "art_ctrl.inputs:jointNames"),
+                        ("sub_joint_cmd.outputs:positionCommand", "art_ctrl.inputs:positionCommand"),
+                        ("sub_joint_cmd.outputs:velocityCommand", "art_ctrl.inputs:velocityCommand"),
+                        ("sub_joint_cmd.outputs:effortCommand", "art_ctrl.inputs:effortCommand"),
+                        ("sub_joint_cmd.outputs:execOut", "art_ctrl.inputs:execIn"),
+                    ],
+                },
+            )
+
+        print(f"[INFO] OmniGraph ROS2 bridge created (prefix={_og_prefix}, core={_cn_prefix}).", flush=True)
+    except Exception as _og_exc:
+        print(f"[WARN] OmniGraph ROS2 bridge creation failed: {_og_exc}", flush=True)
+        # Fallback if graph creation still fails (e.g. extension mismatch). Omits sim_time + timestamp wiring.
+        try:
+            _remove_ros2_bridge_graph()
+            if ros2_graph_mode == "minimal":
+                og.Controller.edit(
+                    {"graph_path": "/World/ROS2Bridge", "evaluator_name": "execution"},
+                    {
+                        keys.CREATE_NODES: [
+                            ("tick", "omni.graph.action.OnPlaybackTick"),
+                            ("pub_joint", f"{_og_prefix}.ROS2PublishJointState"),
+                            ("sub_joint_cmd", f"{_og_prefix}.ROS2SubscribeJointState"),
+                            ("art_ctrl", f"{_cn_prefix}.IsaacArticulationController"),
+                        ],
+                        keys.SET_VALUES: [
+                            ("pub_joint.inputs:topicName", "/joint_states"),
+                            ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
+                            ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                            ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
+                        ],
+                        keys.CONNECT: [
+                            ("tick.outputs:tick", "pub_joint.inputs:execIn"),
+                            ("tick.outputs:tick", "sub_joint_cmd.inputs:execIn"),
+                            ("tick.outputs:tick", "art_ctrl.inputs:execIn"),
+                            ("sub_joint_cmd.outputs:jointNames", "art_ctrl.inputs:jointNames"),
+                            ("sub_joint_cmd.outputs:positionCommand", "art_ctrl.inputs:positionCommand"),
+                            ("sub_joint_cmd.outputs:velocityCommand", "art_ctrl.inputs:velocityCommand"),
+                            ("sub_joint_cmd.outputs:effortCommand", "art_ctrl.inputs:effortCommand"),
+                        ],
+                    },
+                )
+            else:
+                og.Controller.edit(
+                    {"graph_path": "/World/ROS2Bridge", "evaluator_name": "execution"},
+                    {
+                        keys.CREATE_NODES: [
+                            ("tick", "omni.graph.action.OnPlaybackTick"),
+                            ("pub_joint", f"{_og_prefix}.ROS2PublishJointState"),
+                            ("sub_joint_cmd", f"{_og_prefix}.ROS2SubscribeJointState"),
+                            ("art_ctrl", f"{_cn_prefix}.IsaacArticulationController"),
+                            ("rp_wrist", f"{_cn_prefix}.IsaacCreateRenderProduct"),
+                            ("rp_overhead", f"{_cn_prefix}.IsaacCreateRenderProduct"),
+                            ("cam_wrist_helper", f"{_og_prefix}.ROS2CameraHelper"),
+                            ("cam_overhead_helper", f"{_og_prefix}.ROS2CameraHelper"),
+                        ],
+                        keys.SET_VALUES: [
+                            ("pub_joint.inputs:topicName", "/joint_states"),
+                            ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
+                            ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                            ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
+                            ("cam_wrist_helper.inputs:topicName", "/camera/wrist/image_raw"),
+                            ("cam_wrist_helper.inputs:type", "rgb"),
+                            ("cam_overhead_helper.inputs:topicName", "/camera/overhead/image_raw"),
+                            ("cam_overhead_helper.inputs:type", "rgb"),
+                            ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"),
+                            ("rp_wrist.inputs:width", 224),
+                            ("rp_wrist.inputs:height", 224),
+                            ("rp_overhead.inputs:cameraPrim", "/World/Cameras/overhead_cam"),
+                            ("rp_overhead.inputs:width", 224),
+                            ("rp_overhead.inputs:height", 224),
+                        ],
+                        keys.CONNECT: [
+                            ("tick.outputs:tick", "pub_joint.inputs:execIn"),
+                            ("tick.outputs:tick", "sub_joint_cmd.inputs:execIn"),
+                            ("tick.outputs:tick", "rp_wrist.inputs:execIn"),
+                            ("tick.outputs:tick", "rp_overhead.inputs:execIn"),
+                            ("rp_wrist.outputs:execOut", "cam_wrist_helper.inputs:execIn"),
+                            ("rp_overhead.outputs:execOut", "cam_overhead_helper.inputs:execIn"),
+                            ("rp_wrist.outputs:renderProductPath", "cam_wrist_helper.inputs:renderProductPath"),
+                            ("rp_overhead.outputs:renderProductPath", "cam_overhead_helper.inputs:renderProductPath"),
+                            ("sub_joint_cmd.outputs:jointNames", "art_ctrl.inputs:jointNames"),
+                            ("sub_joint_cmd.outputs:positionCommand", "art_ctrl.inputs:positionCommand"),
+                            ("sub_joint_cmd.outputs:velocityCommand", "art_ctrl.inputs:velocityCommand"),
+                            ("sub_joint_cmd.outputs:effortCommand", "art_ctrl.inputs:effortCommand"),
+                            ("sub_joint_cmd.outputs:execOut", "art_ctrl.inputs:execIn"),
+                        ],
+                    },
+                )
+            print(f"[INFO] OmniGraph ROS2 bridge fallback created (prefix={_og_prefix}, core={_cn_prefix}).", flush=True)
+        except Exception as _og_fallback_exc:
+            print(f"[WARN] OmniGraph fallback also failed: {_og_fallback_exc}", flush=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -458,6 +739,8 @@ def clear_spawned_objects():
 
 _ros2_pub_prompt = None
 _ros2_pub_enabled = None
+_ros2_pub_joint_states = None
+_ros2_pub_joint_commands = None
 
 
 def _init_ros2_publishers():
@@ -466,45 +749,11 @@ def _init_ros2_publishers():
     Uses rclpy if available inside the Isaac Sim Python environment.
     Falls back to file-based signaling if not.
     """
-    global _ros2_pub_prompt, _ros2_pub_enabled
-
-    # #region agent log f1832b
-    import json as _json_dbg2, time as _time_dbg2, os as _os_dbg2, glob as _glob_dbg2, sys as _sys_dbg2
-    _DEBUG_LOG2 = "/.cursor/debug-f1832b.log"
-
-    def _dbg2(msg, data, hyp, run_id="run1"):
-        entry = {
-            "sessionId": "f1832b",
-            "id": f"log_{int(_time_dbg2.time()*1000)}",
-            "timestamp": int(_time_dbg2.time()*1000),
-            "location": "interactive_inference.py:_init_ros2_publishers",
-            "message": msg, "data": data, "runId": run_id, "hypothesisId": hyp,
-        }
-        try:
-            with open(_DEBUG_LOG2, "a") as _fh2:
-                _fh2.write(_json_dbg2.dumps(entry) + "\n")
-        except Exception:
-            pass
-
-    # Hyp A: confirm whether /opt/ros/humble exists and rclpy is importable
-    ros_humble_exists = _os_dbg2.path.isdir("/opt/ros/humble")
-    rclpy_in_sys_path = any("rclpy" in p for p in _sys_dbg2.path)
-    rclpy_search_paths = [p for p in _sys_dbg2.path if "ros" in p.lower() or "ament" in p.lower()]
-    _dbg2("rclpy sys.path probe", {
-        "ros_humble_exists": ros_humble_exists,
-        "rclpy_in_sys_path": rclpy_in_sys_path,
-        "ros_related_paths": rclpy_search_paths,
-        "sys_path_count": len(_sys_dbg2.path),
-    }, "A")
-
-    # Hyp E: check if any ros2 library paths exist in LD_LIBRARY_PATH
-    ld_lib_path = _os_dbg2.environ.get("LD_LIBRARY_PATH", "")
-    ros_in_ld = [p for p in ld_lib_path.split(":") if "ros" in p.lower()]
-    _dbg2("LD_LIBRARY_PATH ros2 entries", {"ros_in_ld_library_path": ros_in_ld}, "E")
-    # #endregion
+    global _ros2_pub_prompt, _ros2_pub_enabled, _ros2_pub_joint_states, _ros2_pub_joint_commands
 
     try:
         import rclpy
+        from sensor_msgs.msg import JointState as JointStateMsg
         from std_msgs.msg import Bool as BoolMsg, String as StringMsg
 
         if not rclpy.ok():
@@ -512,12 +761,16 @@ def _init_ros2_publishers():
         node = rclpy.create_node("isaac_sim_ui_publisher")
         _ros2_pub_prompt = node.create_publisher(StringMsg, "/vla/prompt", 10)
         _ros2_pub_enabled = node.create_publisher(BoolMsg, "/vla/enabled", 10)
-        print("[INFO] ROS2 publishers for /vla/prompt and /vla/enabled created via rclpy.", flush=True)
+        # Fallback publisher: publish joint states from Isaac Lab articulation data directly.
+        _ros2_pub_joint_states = node.create_publisher(JointStateMsg, "/joint_states", 10)
+        # Reset helper: overwrite stale command targets latched by ROS2SubscribeJointState.
+        _ros2_pub_joint_commands = node.create_publisher(JointStateMsg, "/joint_commands", 10)
+        print(
+            "[INFO] ROS2 publishers for /vla/prompt, /vla/enabled, /joint_states, and /joint_commands created via rclpy.",
+            flush=True,
+        )
         return node
     except Exception as e:
-        # #region agent log f1832b
-        _dbg2("rclpy import/init FAILED", {"error": str(e), "error_type": type(e).__name__}, "A")
-        # #endregion
         print(f"[WARN] rclpy not available ({e}). Using file-based signaling for prompt/enabled.", flush=True)
         return None
 
@@ -554,6 +807,45 @@ def publish_enabled(enabled: bool):
         with open("/tmp/vla_signals/enabled.txt", "w") as f:
             f.write("1" if enabled else "0")
         print(f"[OpenVLA debug] Wrote enabled={enabled} to /tmp/vla_signals/enabled.txt (no ROS2)", flush=True)
+
+
+def publish_joint_states(robot: Articulation, ros2_node):
+    """Publish sensor_msgs/JointState directly from articulation data (fallback path)."""
+    global _ros2_pub_joint_states
+    if _ros2_pub_joint_states is None or ros2_node is None:
+        return
+    if robot is None or (not robot.is_initialized):
+        return
+    try:
+        from sensor_msgs.msg import JointState as JointStateMsg
+        msg = JointStateMsg()
+        msg.header.stamp = ros2_node.get_clock().now().to_msg()
+        msg.name = list(SOARM_JOINT_NAMES)
+        msg.position = robot.data.joint_pos[0, :NUM_JOINTS].cpu().tolist()
+        msg.velocity = robot.data.joint_vel[0, :NUM_JOINTS].cpu().tolist()
+        _ros2_pub_joint_states.publish(msg)
+    except Exception:
+        pass
+
+
+def publish_joint_command_reset(positions: list[float] | None = None):
+    """Publish a neutral command to clear stale /joint_commands targets in OmniGraph."""
+    global _ros2_pub_joint_commands
+    if _ros2_pub_joint_commands is None:
+        return
+    try:
+        from sensor_msgs.msg import JointState as JointStateMsg
+        msg = JointStateMsg()
+        msg.name = list(SOARM_JOINT_NAMES)
+        if positions is None:
+            positions = [0.0] * NUM_JOINTS
+        msg.position = list(positions[:NUM_JOINTS])
+        msg.velocity = [float("nan")] * NUM_JOINTS
+        msg.effort = [float("nan")] * NUM_JOINTS
+        _ros2_pub_joint_commands.publish(msg)
+        print(f"[OpenVLA debug] Published reset /joint_commands: {msg.position}", flush=True)
+    except Exception:
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -630,6 +922,7 @@ class InteractiveControlPanel:
         self._status_label.text = "Status: E-STOPPED"
 
     def _on_reset_robot(self):
+        # Disable inference first so the bridge flushes queued actions.
         publish_enabled(False)
         self._state = STATE_IDLE
 
@@ -639,11 +932,13 @@ class InteractiveControlPanel:
                 zeros = torch.zeros(1, NUM_JOINTS, device=self._robot.device)
                 self._robot.write_joint_state_to_sim(home, zeros)
                 self._robot.set_joint_position_target(home)
+                # Also overwrite any stale ROS-side command target held by sub_joint_cmd.
+                publish_joint_command_reset([0.0] * NUM_JOINTS)
             except Exception:
                 pass
 
         self._update_button_states()
-        self._status_label.text = "Status: IDLE"
+        self._status_label.text = "Status: IDLE (hard reset)"
 
     def _on_reset_scene(self):
         clear_spawned_objects()
@@ -735,7 +1030,7 @@ class InteractiveControlPanel:
 
                         def _on_timeout(model):
                             val = model.get_value_as_int()
-                            self._timeout_sec = max(5, min(300, val))
+                            self._timeout_sec = max(AUTO_STOP_MIN_SEC, min(AUTO_STOP_MAX_SEC, val))
 
                         timeout_field.model.add_value_changed_fn(_on_timeout)
 
@@ -866,23 +1161,47 @@ def main():
     livestream = os.environ.get("LIVESTREAM") in ("1", "2")
 
     # -- Simulation context --
-    sim_cfg = SimulationCfg(dt=1 / 120.0, render_interval=2)
+    sim_cfg = SimulationCfg(dt=1 / 120.0, render_interval=2, device="cpu")
     sim = SimulationContext(sim_cfg)
 
     # -- Build the scene --
     print("[INFO] Setting up scene (robot, cameras, lighting)...", flush=True)
     robot, wrist_cam, overhead_cam = _setup_scene(sim)
 
-    # -- ROS2 OmniGraph bridge --
-    print("[INFO] Creating OmniGraph ROS2 bridge...", flush=True)
-    _setup_ros2_bridge()
-
-    # -- ROS2 publishers for prompt/enabled --
-    _ros2_node = _init_ros2_publishers()
-
     # -- Reset simulation --
     sim.reset()
     robot.reset()
+
+    # -- ROS2 OmniGraph bridge --
+    # PhysX articulations/tensors are only fully initialized after reset (and often after at least 1 step).
+    # Creating the ROS2 bridge before reset can cause "Failed to find articulation" errors.
+
+    # Step once to ensure PhysX articulation is instantiated.
+    sim.step()
+    robot.update(sim.cfg.dt)
+
+    # Ensure playback-based OmniGraph triggers (OnPlaybackTick) are active in standalone mode.
+    try:
+        omni.timeline.get_timeline_interface().play()
+    except Exception:
+        pass
+
+    print("[INFO] Creating OmniGraph ROS2 bridge...", flush=True)
+    _setup_ros2_bridge()
+
+    # Standalone scripts can step physics while timeline remains stopped.
+    # ROS2 OmniGraph publishers driven by OnPlaybackTick only run in Play mode.
+    try:
+        sim.play()
+    except Exception:
+        pass
+    try:
+        omni.timeline.get_timeline_interface().play()
+    except Exception:
+        pass
+
+    # -- ROS2 publishers for prompt/enabled --
+    _ros2_node = _init_ros2_publishers()
 
     # -- Set viewport camera so WebRTC stream shows the robot (eye position, look-at position in meters) --
     sim.set_camera_view([0.8, 0.8, 0.5], [0.0, 0.0, 0.2])
@@ -917,6 +1236,9 @@ def main():
         # Update telemetry + auto-stop every 6 steps (~20 Hz at 120 Hz sim)
         if step_count % 6 == 0:
             panel.update(sim.get_physics_dt() * step_count)
+            # Ensure /joint_states is always available to the VLA bridge even if
+            # OmniGraph ROS2 joint publisher is discovered but not actively emitting.
+            publish_joint_states(robot, _ros2_node)
 
         # Spin ROS2 node if we have one (non-blocking)
         if _ros2_node is not None:

@@ -108,6 +108,30 @@ services:
     restart: "no"
 
   # ---------------------------------------------------------------------------
+  # Phospho Bridge: Web dashboard for remote robot control
+  # Provides a browser-based UI that relays commands to Isaac Sim via ROS2
+  # ---------------------------------------------------------------------------
+  phospho-bridge:
+    profiles: ["interactive"]
+    build:
+      context: ./phospho-bridge
+      dockerfile: Dockerfile
+    image: soarm-phospho-bridge
+    container_name: soarm-phospho-bridge
+    network_mode: host
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+      - PHOSPHO_BRIDGE_PORT=${PHOSPHO_BRIDGE_PORT:-8080}
+      # Optional: rotating file inside container (docker exec cat /tmp/phospho_bridge.log)
+      - PHOSPHO_BRIDGE_LOG_FILE=${PHOSPHO_BRIDGE_LOG_FILE:-/tmp/phospho_bridge.log}
+      - PHOSPHO_BRIDGE_LOG_LEVEL=${PHOSPHO_BRIDGE_LOG_LEVEL:-INFO}
+      - PHOSPHO_ROS_EXECUTOR_THREADS=${PHOSPHO_ROS_EXECUTOR_THREADS:-4}
+      - PHOSPHO_CAM_MIN_INTERVAL_SEC=${PHOSPHO_CAM_MIN_INTERVAL_SEC:-0.04}
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
   # Training: LoRA/QLoRA fine-tuning of pi0/pi0-FAST
   # Runs exclusively (no other GPU containers) in Mode A
   # ---------------------------------------------------------------------------

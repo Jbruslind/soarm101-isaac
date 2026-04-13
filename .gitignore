@@ -25,4 +25,12 @@ Thumbs.db
 *.log
 logs/
 
+# Local venvs
+.venv_hf/
+
+# ROS 2 colcon artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
 *.usd

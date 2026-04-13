@@ -15,10 +15,6 @@
 #   docker build -f Dockerfile.jetson \
 #       --build-arg L4T_TAG=r35.4.1 \
 #       -t soarm-openpi-jetson .
-#
-# SOARM inference before you have a LoRA export: set OPENPI_POLICY_MODE=soarm and either mount
-# OPENPI_CHECKPOINT_DIR or omit it — entrypoint.jetson.sh falls back to OpenPi pi0_fast_base /
-# pi0_base for soarm_pi0_fast / soarm_pi0 (override with OPENPI_BASE_CHECKPOINT_DIR if needed).
 
 ARG L4T_TAG=r35.4.1
 FROM dustynv/l4t-pytorch:${L4T_TAG}
@@ -43,8 +39,6 @@ WORKDIR /app/openpi
 # Overwrite serve_policy.py with Python 3.9–compatible version (match/case, TypeAlias) for fallback
 COPY scripts/serve_policy.py scripts/serve_policy.py
 COPY scripts/preload_checkpoint.py scripts/preload_checkpoint.py
-COPY scripts/register_soarm_configs.py scripts/register_soarm_configs.py
-COPY scripts/serve_policy_with_soarm.py scripts/serve_policy_with_soarm.py
 
 # Use uv to install Python 3.11 and sync project deps (avoids flax/jax conflicts on 3.8)
 RUN uv python install 3.11 \

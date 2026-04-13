@@ -24,6 +24,7 @@
 # Ports required:
 #   TCP 49100  (WebRTC signaling)
 #   UDP 47998  (WebRTC media stream)
+#   TCP 8080   (Phospho Bridge web dashboard)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,8 +76,16 @@ if [[ "$POLICY_MODE" == "soarm" ]]; then
     fi
 fi
 
+# Prefer the IPv4 used for the default route (usually the LAN address other devices can reach).
+# `hostname -I` often lists Docker/Wi-Fi/VPN in arbitrary order; the first entry is frequently wrong.
+_default_route_ip() {
+    ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+}
 if [[ -z "$PUBLIC_IP" ]]; then
-    PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || PUBLIC_IP="127.0.0.1"
+    PUBLIC_IP="$(_default_route_ip)"
+    if [[ -z "$PUBLIC_IP" ]]; then
+        PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || PUBLIC_IP="127.0.0.1"
+    fi
 fi
 
 echo "=== Interactive VLA Inference Test ==="
@@ -121,15 +130,27 @@ if [[ -n "$GPU_MEM_FREE" ]] && [[ $SIM_ONLY -eq 0 ]] && [[ -z "$REMOTE_HOST" ]];
     fi
 fi
 
+PHOSPHO_PORT="${PHOSPHO_BRIDGE_PORT:-8080}"
+
 echo ""
 echo "Once all services are up and you see 'Interactive inference environment ready':"
 echo ""
-echo "  1. Open the Isaac Sim WebRTC Streaming Client."
-echo "  2. Enter server address: $PUBLIC_IP"
-echo "  3. Click Connect."
-echo "  4. Use the 'VLA Interactive Test' panel to send commands."
+echo "  Web Dashboard (Phospho Bridge):"
+echo "    http://${PUBLIC_IP}:${PHOSPHO_PORT}"
+echo "    Diagnostics JSON: curl -sS http://${PUBLIC_IP}:${PHOSPHO_PORT}/api/debug/status | jq ."
+echo "    Bridge logs: cd $PROJECT_DIR/docker && docker compose --profile interactive logs -f phospho-bridge"
+echo "    Quick check from another machine: curl -sS http://${PUBLIC_IP}:${PHOSPHO_PORT}/api/health"
+echo "    If that times out, use the correct LAN IP of this host (not 127.0.0.1) and open TCP ${PHOSPHO_PORT}"
+echo "    in the firewall (e.g. sudo ufw allow ${PHOSPHO_PORT}/tcp)."
+echo "    Control the robot with keyboard/gamepad, view cameras, send VLA commands."
 echo ""
-echo "  Ports required: TCP 49100, UDP 47998 (host networking)."
+echo "  Isaac Sim WebRTC (optional, for full 3D viewport):"
+echo "    1. Open the Isaac Sim WebRTC Streaming Client."
+echo "    2. Enter server address: $PUBLIC_IP"
+echo "    3. Click Connect."
+echo "    4. Use the 'VLA Interactive Test' panel to send commands."
+echo ""
+echo "  Ports required: TCP 49100, UDP 47998, TCP ${PHOSPHO_PORT} (host networking)."
 echo "  Note: only one WebRTC client can connect at a time."
 echo ""
 
@@ -150,6 +171,12 @@ EXTRA_ENV+=(-e "VLA_AUTO_STOP_SEC=$VLA_AUTO_STOP_SEC")
 if [[ -n "$CHECKPOINT" ]]; then
     EXTRA_ENV+=(-e "OPENPI_CHECKPOINT_DIR=$CHECKPOINT")
 fi
+
+# Start the phospho-bridge web dashboard (always, for all interactive modes).
+# Export PHOSPHO_BRIDGE_PORT so compose substitution matches the printed URL.
+echo "Starting Phospho Bridge web dashboard on port ${PHOSPHO_PORT}..."
+export PHOSPHO_BRIDGE_PORT="${PHOSPHO_PORT}"
+docker compose --profile interactive up -d phospho-bridge
 
 if [[ -n "$REMOTE_HOST" ]]; then
     # Use remote inference: start only the ROS2 bridge, point at remote server
@@ -173,10 +200,8 @@ docker compose --profile interactive run --rm \
     /isaac-sim/python.sh /isaac_envs/interactive_inference.py \
     --kit_args '--enable isaacsim.ros2.bridge --/rtx/verifyDriverVersion/enabled=false'
 
-# Cleanup background services on exit (we started something unless sim-only only)
+# Cleanup background services on exit (phospho-bridge always runs; others depend on mode)
 echo ""
 echo "Shutting down services..."
-if [[ $SIM_ONLY -eq 0 ]] || [[ -n "$REMOTE_HOST" ]]; then
-    docker compose --profile interactive down
-fi
+docker compose --profile interactive down
 echo "=== Done ==="

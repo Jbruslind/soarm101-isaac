@@ -27,10 +27,9 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - OPENPI_PORT=${OPENPI_PORT:-8000}
-      # Default SOARM + pi0-FAST; if ../models/soarm_lora is missing, entrypoint uses OpenPi pi0_fast_base.
-      - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
-      - OPENPI_POLICY_CONFIG=${OPENPI_POLICY_CONFIG:-soarm_pi0_fast}
-      - OPENPI_CHECKPOINT_DIR=${OPENPI_CHECKPOINT_DIR:-/models/soarm_lora}
+      - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-droid}
+      - OPENPI_POLICY_CONFIG=${OPENPI_POLICY_CONFIG:-pi0_fast_droid}
+      - OPENPI_CHECKPOINT_DIR=/models/soarm_lora
     volumes:
       - ../models:/models:ro
       - ./training/configs:/app/openpi/src/openpi/training/configs_custom:ro

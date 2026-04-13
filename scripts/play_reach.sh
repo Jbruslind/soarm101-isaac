@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the SO-ARM101 reach environment with a GUI so you can see the robot via the third-person viewport camera.
+# Run the SO-ARM101 reach environment on Isaac Sim 5.1 with a GUI so you can see the robot via the third-person viewport camera.
 # Uses livestream so you connect with the Isaac Sim WebRTC client to view the simulation.
 #
 # Usage: ./scripts/play_reach.sh

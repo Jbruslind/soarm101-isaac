@@ -66,8 +66,6 @@ rsync -avz --progress \
 rsync -avz --progress \
     "$PROJECT_DIR/docker/openpi-server/scripts/serve_policy.py" \
     "$PROJECT_DIR/docker/openpi-server/scripts/preload_checkpoint.py" \
-    "$PROJECT_DIR/docker/openpi-server/scripts/register_soarm_configs.py" \
-    "$PROJECT_DIR/docker/openpi-server/scripts/serve_policy_with_soarm.py" \
     "$JETSON_HOST:$REMOTE_DIR/docker/openpi-server/scripts/"
 
 # Write .env with L4T tag
@@ -75,8 +73,8 @@ echo "[2/5] Writing .env for Jetson..."
 ssh "$JETSON_HOST" "cat > $REMOTE_DIR/docker/.env" <<EOF
 L4T_TAG=$L4T_TAG
 OPENPI_PORT=8000
-OPENPI_POLICY_MODE=soarm
-OPENPI_POLICY_CONFIG=soarm_pi0_fast
+# For demos without SOARM checkpoints, use an OpenPi built-in DROID config.
+OPENPI_POLICY_CONFIG=pi0_fast_droid
 NVIDIA_VISIBLE_DEVICES=all
 EOF
 
@@ -86,6 +84,18 @@ if [[ -d "$PROJECT_DIR/training/configs" ]]; then
     rsync -avz --progress \
         "$PROJECT_DIR/training/configs/" \
         "$JETSON_HOST:$REMOTE_DIR/docker/training/configs/"
+fi
+
+# Sync SOARM checkpoint directory expected by OPENPI_CHECKPOINT_DIR=/models/soarm_lora.
+echo "[3.5/5] Syncing model checkpoints (models/soarm_lora)..."
+if [[ -d "$PROJECT_DIR/models/soarm_lora" ]]; then
+    ssh "$JETSON_HOST" "mkdir -p $REMOTE_DIR/models/soarm_lora"
+    rsync -avz --progress \
+        "$PROJECT_DIR/models/soarm_lora/" \
+        "$JETSON_HOST:$REMOTE_DIR/models/soarm_lora/"
+else
+    echo "WARNING: $PROJECT_DIR/models/soarm_lora not found."
+    echo "         Jetson will fall back to default DROID policy unless you copy checkpoints manually."
 fi
 
 # Build on Jetson (ARM64 native build -- may take a while)

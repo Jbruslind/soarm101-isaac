@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Evaluate a trained VLA policy in the Isaac Sim environment.
+# Evaluate a trained VLA policy in the Isaac Sim 5.1 environment.
 #
 # Starts the OpenPi server (local or remote), Isaac Sim, and ROS2 bridge,
 # then runs the VLA bridge node for closed-loop evaluation.

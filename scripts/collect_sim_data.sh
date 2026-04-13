@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Collect simulation episodes from Isaac Sim and save in LeRobot v3.0 format.
+# Collect simulation episodes from Isaac Sim 5.1 and save in LeRobot v3.0 format.
 # Uses an IK-based scripted policy to generate smooth demonstrations.
 #
 # Usage:

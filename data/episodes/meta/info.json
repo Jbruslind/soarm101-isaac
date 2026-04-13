@@ -1,0 +1,55 @@
+{
+  "codebase_version": "v3.0",
+  "robot_type": "so_arm101",
+  "fps": 30,
+  "total_episodes": 50,
+  "total_frames": 7500,
+  "features": {
+    "observation.state": {
+      "dtype": "float32",
+      "shape": [
+        6
+      ]
+    },
+    "action": {
+      "dtype": "float32",
+      "shape": [
+        6
+      ]
+    },
+    "language_instruction": {
+      "dtype": "string",
+      "shape": [
+        1
+      ]
+    },
+    "observation.images.wrist": {
+      "dtype": "video",
+      "shape": [
+        224,
+        224,
+        3
+      ],
+      "video_info": {
+        "video.fps": 30.0,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "has_audio": false
+      }
+    },
+    "observation.images.third_person": {
+      "dtype": "video",
+      "shape": [
+        224,
+        224,
+        3
+      ],
+      "video_info": {
+        "video.fps": 30.0,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "has_audio": false
+      }
+    }
+  }
+}

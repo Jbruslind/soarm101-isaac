@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Python deps for the VLA bridge (openpi-client + image processing)
 RUN pip3 install --no-cache-dir \
     openpi-client \
+    typing_extensions \
     numpy \
     opencv-python-headless \
     Pillow

@@ -1,0 +1,38 @@
+services:
+  # Legacy migration-only compose file.
+  # The default stack now uses Isaac Sim 5.1 via docker-compose.yml.
+  isaac-sim-51:
+    image: nvcr.io/nvidia/isaac-sim:5.1.0
+    container_name: soarm-isaac-sim-51
+    runtime: nvidia
+    gpus: all
+    network_mode: host
+    tty: true
+    stdin_open: true
+    environment:
+      - ACCEPT_EULA=${ACCEPT_EULA:-Y}
+      - PRIVACY_CONSENT=${PRIVACY_CONSENT:-Y}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - ISAAC_SIM_HEADLESS=${ISAAC_SIM_HEADLESS:-1}
+      - LIVESTREAM=${LIVESTREAM:-2}
+      - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
+    volumes:
+      - ../robot_description:/robot_description:ro
+      - ../isaac_envs:/isaac_envs:ro
+      - ../data:/data:rw
+      - isaac51-cache-kit:/isaac-sim/kit/cache
+      - isaac51-cache-ov:/root/.cache/ov
+      - isaac51-cache-pip:/root/.cache/pip
+      - isaac51-cache-glcache:/root/.cache/nvidia/GLCache
+      - isaac51-cache-compute:/root/.nv/ComputeCache
+      - isaac51-logs:/root/.nvidia-omniverse/logs
+    restart: "no"
+
+volumes:
+  isaac51-cache-kit:
+  isaac51-cache-ov:
+  isaac51-cache-pip:
+  isaac51-cache-glcache:
+  isaac51-cache-compute:
+  isaac51-logs:
