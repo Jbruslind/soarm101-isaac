@@ -121,6 +121,8 @@ compatible containers run simultaneously.
 | **[Remote Deployment](docs/REMOTE_DEPLOYMENT.md)** | Cloud GPU setup, TLS, data sync, latency |
 | **[Interactive Inference](docs/INTERACTIVE_INFERENCE.md)** | Interactive VLA testing with WebRTC streaming |
 | **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common errors and solutions |
+| **[Real-to-Sim Plan](docs/REAL2SIM.md)** | Planned scanned scenes, simulated D455, Isaac Sim 6.1 migration |
+| **[Cameras](docs/CAMERAS.md)** | Overhead D455 + wrist USB webcam: real setup, Isaac Lab 3.0 camera config, calibration, sim-to-real best practices |
 
 ## Workflow Scripts
 
