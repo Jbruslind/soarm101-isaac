@@ -9,7 +9,9 @@ in Isaac Sim. The full plan is in
 - **Scanned scenes as Isaac environments.** Rooms and objects reconstructed by
   [scan-twin](https://github.com/Jbruslind/scan-twin) load as scenes, with the SO-ARM101 placed on the scene's table.
 - **Calibrated cameras.** A fixed overhead D455 (RGB-D, 848x480) whose depth noise and holes match the
-  measured real camera, and a wrist RGB-only MIPI camera. A stereo camera may be added later.
+  measured real camera, and a wrist RGB camera (a Logitech USB webcam: the robot's AGX Xavier rules out a
+  cheap MIPI camera). A stereo camera may be added later. See [CAMERAS.md](CAMERAS.md) for how both are
+  set up on the real robot and in Isaac Lab 3.0.
 - **Isaac Sim 6.1 migration.** The stack moves to Isaac Sim 6.1 and Isaac Lab 3.0.
 
 ## Role of this repo
@@ -40,6 +42,8 @@ of this repo will not require it until it is opened; features that use it are be
 - [I-12: Tutorials](https://github.com/Jbruslind/soarm101-isaac/issues/12)
 - [I-13: Close the scene loop](https://github.com/Jbruslind/soarm101-isaac/issues/13)
 - [I-14: Wrist camera choice and profile (needs the user)](https://github.com/Jbruslind/soarm101-isaac/issues/14)
+- [I-16: Camera calibration and sim-vs-real overlay check](https://github.com/Jbruslind/soarm101-isaac/issues/17)
+- [I-17: Real-robot camera pipeline matching sim](https://github.com/Jbruslind/soarm101-isaac/issues/18)
 - [I-15: License audit before going public](https://github.com/Jbruslind/soarm101-isaac/issues/15)
 
 The tutorial series is listed in [tutorials/README.md](tutorials/README.md). Progress is tracked in
