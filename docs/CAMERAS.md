@@ -6,7 +6,7 @@ so that a policy trained on simulated images sees the same kind of images on the
 | Camera | Hardware | Mount | Streams | Status |
 |---|---|---|---|---|
 | `overhead` | Intel RealSense D455 | Fixed, ~1 m above the workspace, looking down | RGB + depth, 848x480 @ 30 | Intrinsics known; mount pose to measure (#17) |
-| `wrist` | Logitech USB webcam (model TBC) | Child of `gripper_frame_link` | RGB, native mode (e.g. 640x480 @ 30, MJPG) | Hardware chosen (#14), not yet calibrated |
+| `wrist` | Logitech **C920** USB webcam, autofocus locked | Child of `gripper_frame_link` | RGB, 16:9 mode, e.g. 1280x720 @ 30 MJPG | Hardware chosen (#14), not yet calibrated |
 
 The robot computer is an NVIDIA **AGX Xavier**. A MIPI/CSI wrist camera was ruled out because the
 AGX's 120-pin camera connector needs a $170+ adapter plus sensor bring-up work. A USB webcam
@@ -152,6 +152,28 @@ honours it.
 - **FOV:** don't trust spec sheets for the C270 class. It is sold as 55-60 degrees diagonal, but a
   published calibration implies ~51 degrees at 640x480. Calibrate the actual unit (#17).
 
+**Our camera is a C920. How to make it a wrist camera:**
+- **Weight.** At 162 g whole, it would load the STS3215 wrist servo heavily. Run it on the arm only
+  as a bare board in a printed holder, with a light cable.
+  - Removing the housing: 4 screws (2 under the rubber pads), then 3 more for the PCB.
+  - Weigh the board with its lens.
+  - No community SO-101 mount exists for a bare C920 board, so the holder needs designing. The
+    autofocus coil's wires stay connected.
+- **Focus.** Disable autofocus, then pick `focus_absolute` by a sweep: step through values with a
+  textured target at ~20 cm and keep the sharpest (highest Laplacian variance). The calibration
+  (#17) is only valid at that value, so record it in the profile.
+- **Lens sag.** The autofocus lens is held by a voice coil, not locked mechanically. After
+  calibrating, re-check reprojection error with the wrist pointing down, level and up. If the
+  error grows past ~1 px, either calibrate in the working orientation or fall back to a
+  fixed-focus board. The 32x32 UVC module that fits the official SO-ARM100 wrist mount is one
+  option.
+- **Mode.** Use a 16:9 mode (1280x720, or 640x360 if the unit lists it, MJPG at 30 fps). The 16:9
+  modes use the full sensor width (~70 degrees horizontal, 43 vertical). 4:3 modes such as 640x480
+  crop the sides, and a wrist camera wants the width. Confirm with `v4l2-ctl --list-formats-ext`.
+- **Priors until calibrated.** fx = fy ≈ 907 px at 1280x720, from the spec FOV. Published C920
+  calibrations show mild barrel distortion (k1 ≈ 0.08-0.12, k2 ≈ -0.15 to -0.22), so plumb-bob
+  k1, k2 (+k3) is enough.
+
 **Lock the camera's settings.**
 - LeRobot's `OpenCVCameraConfig` only sets size, fps and fourcc, so exposure, white balance and
   focus stay on auto unless something else sets them.
@@ -165,7 +187,8 @@ v4l2-ctl -d $DEV -c auto_exposure=1,exposure_dynamic_framerate=0,exposure_time_a
                  -c white_balance_automatic=0,white_balance_temperature=4600 \
                  -c power_line_frequency=2,backlight_compensation=0     # 2 = 60 Hz mains
 # autofocus models only:
-v4l2-ctl -d $DEV -c focus_automatic_continuous=0 && v4l2-ctl -d $DEV -c focus_absolute=<N>
+v4l2-ctl -d $DEV -c focus_automatic_continuous=0 && v4l2-ctl -d $DEV -c focus_absolute=<N>   # C920: required
+v4l2-ctl -d $DEV -c zoom_absolute=100                                                     # no digital zoom
 ```
 
 - `exposure_time_absolute` is in units of 100 µs.
@@ -183,7 +206,7 @@ v4l2-ctl -d $DEV -c focus_automatic_continuous=0 && v4l2-ctl -d $DEV -c focus_ab
 - Run the full joint range while streaming, and watch `dmesg` for USB resets.
 
 **LeRobot config:**
-`OpenCVCameraConfig(index_or_path=DEV, width=640, height=480, fps=30, fourcc="MJPG")`. Check that
+`OpenCVCameraConfig(index_or_path=DEV, width=1280, height=720, fps=30, fourcc="MJPG")`. Check that
 your LeRobot version has `fourcc`.
 
 ## 6. Calibrate, then prove the twin matches (#17)
