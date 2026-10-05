@@ -121,6 +121,7 @@ compatible containers run simultaneously.
 | **[Remote Deployment](docs/REMOTE_DEPLOYMENT.md)** | Cloud GPU setup, TLS, data sync, latency |
 | **[Interactive Inference](docs/INTERACTIVE_INFERENCE.md)** | Interactive VLA testing with WebRTC streaming |
 | **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common errors and solutions |
+| **[Real-to-Sim Plan](docs/REAL2SIM.md)** | Planned scanned scenes, simulated D455, Isaac Sim 6.1 migration |
 
 ## Workflow Scripts
 
