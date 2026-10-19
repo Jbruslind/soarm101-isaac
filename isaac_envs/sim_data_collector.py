@@ -250,12 +250,14 @@ def collect_episodes(
     # --gui (scripts/_gui.sh) sets HEADLESS=0 and DISPLAY to the Sunshine X display.
     gui = os.environ.get("HEADLESS") == "0" and bool(os.environ.get("DISPLAY"))
 
-    # AppLauncher is always used: cameras need the rendering pipeline, and
-    # livestream needs the WebRTC extension.  Both require AppLauncher.
+    # Kit is always started: cameras need the RTX renderer and livestream needs the
+    # WebRTC extension. Isaac Lab 3.0 only opens a window for a Kit visualizer, so the
+    # GUI mode requests one (the env's default_visualizer_cfg makes it follow the robot).
     from isaaclab.app import AppLauncher
     app_launcher = AppLauncher(
         headless=not gui,
         enable_cameras=use_camera or livestream or gui,
+        visualizer=["kit"] if gui else None,
     )
     sim_app = app_launcher.app
 
@@ -326,23 +328,24 @@ def collect_episodes(
         writer.start_episode(task=lang)
         done = False
         step = 0
+        ee_dist = float("nan")
 
         while not done:
-            # Retrieve quantities from the physics engine
-            jacobian_full = robot.root_physx_view.get_jacobians()
-            jacobian = jacobian_full[:, ee_jacobi_idx, :, arm_joint_ids]
+            # Retrieve quantities from the physics engine (Isaac Lab 3.0: ProxyArray -> .torch,
+            # poses are pos(3) + quat(4) with quaternions in (x, y, z, w) order)
+            jacobian = robot.data.body_link_jacobian_w.torch[:, ee_jacobi_idx, :, arm_joint_ids]
 
-            # body_state_w is (num_envs, num_bodies, 13) = pos(3) + quat(4) + vel(6)
-            ee_state_w = robot.data.body_state_w[:, ee_body_id]
-            ee_pos_w = ee_state_w[:, 0:3]
-            ee_quat_w = ee_state_w[:, 3:7]
+            ee_pose_w = robot.data.body_link_pose_w.torch[:, ee_body_id]
+            ee_pos_w = ee_pose_w[:, 0:3]
+            ee_quat_w = ee_pose_w[:, 3:7]
 
-            # root_state_w is (num_envs, 13)
-            root_state_w = robot.data.root_state_w
-            root_pos_w = root_state_w[:, 0:3]
-            root_quat_w = root_state_w[:, 3:7]
+            root_pose_w = robot.data.root_link_pose_w.torch
+            root_pos_w = root_pose_w[:, 0:3]
+            root_quat_w = root_pose_w[:, 3:7]
 
-            arm_joint_pos = robot.data.joint_pos[:, arm_joint_ids]
+            arm_joint_pos = robot.data.joint_pos.torch[:, arm_joint_ids]
+            # Measured before stepping: on the final step the env auto-resets the robot.
+            ee_dist = torch.norm(ee_pos_w - target_w, dim=-1).item()
 
             # Transform EE pose from world frame to robot base frame
             ee_pos_b, ee_quat_b = subtract_frame_transforms(
@@ -351,7 +354,7 @@ def collect_episodes(
             )
 
             # Transform target from world frame to base frame
-            identity_quat = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device)
+            identity_quat = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=env.device)  # (x, y, z, w)
             target_b, _ = subtract_frame_transforms(
                 root_pos_w, root_quat_w,
                 target_w, identity_quat,
@@ -365,11 +368,11 @@ def collect_episodes(
             )
 
             # Build full 6-DOF joint target (arm + gripper held at 0)
-            full_joint_target = robot.data.joint_pos.clone()
+            full_joint_target = robot.data.joint_pos.torch.clone()
             full_joint_target[:, arm_joint_ids] = arm_joint_target
 
             # Convert to delta-action that the environment expects
-            current_pos = robot.data.joint_pos
+            current_pos = robot.data.joint_pos.torch
             delta = (full_joint_target - current_pos) / cfg.action_scale
             action = delta.clamp(-1.0, 1.0)
 
@@ -398,9 +401,9 @@ def collect_episodes(
 
         writer.end_episode()
 
-        ee_pos_final = robot.data.body_state_w[:, ee_body_id, 0:3]
-        dist = torch.norm(ee_pos_final - target_w, dim=-1).item()
-        status = "REACHED" if dist < cfg.success_threshold else f"dist={dist:.3f}m"
+        # Success terminates the episode inside env.step, so a short episode means reached.
+        reached = bool(terminated.any()) or ee_dist < cfg.success_threshold
+        status = "REACHED" if reached else f"dist={ee_dist:.3f}m"
         print(f"Episode {ep + 1}/{num_episodes}: {step} steps  ({status})", flush=True)
 
     writer.save()

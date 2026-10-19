@@ -19,7 +19,7 @@ running in simulation, all on a single machine with an NVIDIA GPU.
 | Dependency | Minimum Version | Check |
 |---|---|---|
 | Ubuntu | 22.04 | `lsb_release -a` |
-| NVIDIA Driver | 535.129.03 | `nvidia-smi` |
+| NVIDIA Driver | 580.95.05 (see [ISAAC_VERSIONS.md](ISAAC_VERSIONS.md)) | `nvidia-smi` |
 | Docker Engine | 26.0.0 | `docker --version` |
 | Docker Compose | 2.25.0 | `docker compose version` |
 | NVIDIA Container Toolkit | latest | `nvidia-ctk --version` |
@@ -78,7 +78,7 @@ Isaac Sim in Docker is intended to run headless; you interact with it via the We
    ./scripts/run_isaac_sim_gui.sh
    ```
 
-   The script follows the [official Container Installation](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/install_container.html) layout (cache/main, config, data, logs, pkg) and runs as your user so no `chown` is needed. Use `ISAAC_SIM_TAG=5.1.0` to use Isaac Sim 5.1. Alternatively, run the container as root and make the importer dir writable first:
+   The script follows the [official Container Installation](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/install_container.html) layout (cache/main, config, data, logs, pkg) and runs as your user so no `chown` is needed. Set `ISAAC_SIM_TAG=<tag>` to override the version (defaults to `ISAACSIM_VERSION` in `docker/.env`). Alternatively, run the container as root and make the importer dir writable first:
    ```bash
    ./scripts/prepare_urdf_import_dir.sh
    docker run --name isaac-sim --entrypoint bash -it --rm --runtime=nvidia --gpus all \
@@ -89,10 +89,10 @@ Isaac Sim in Docker is intended to run headless; you interact with it via the We
      -v isaac-cache-glcache:/root/.cache/nvidia/GLCache \
      -v isaac-cache-compute:/root/.nv/ComputeCache \
      -v isaac-logs:/root/.nvidia-omniverse/logs \
-     nvcr.io/nvidia/isaac-sim:5.1.0
+     nvcr.io/nvidia/isaac-sim:6.2.0.1
    ```
 
-2. (Optional) Inside the container, run the compatibility check: `bash isaac-sim.compatibility_check.sh --/app/quitAfter=10 --no-window` (see [official Container Installation](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/install_container.html)).
+2. (Optional) Inside the container, run the compatibility check: `bash isaac-sim.compatibility_check.sh --/app/quitAfter=10 --no-window` (see [official Container Installation](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/install_container.html)).
 
 3. Inside the container, start Isaac Sim in headless streaming mode (use `bash` so the script runs without needing execute bit on root-owned files):
 
@@ -102,7 +102,7 @@ Isaac Sim in Docker is intended to run headless; you interact with it via the We
 
    Wait until the log shows: `Isaac Sim Full Streaming App is loaded.`
 
-4. On your workstation, open the [Isaac Sim WebRTC Streaming Client](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/manual_livestream_clients.html), enter the host’s IP, and connect.
+4. On your workstation, open the [Isaac Sim WebRTC Streaming Client](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/manual_livestream_clients.html), enter the host’s IP, and connect.
 
 5. In the streamed Isaac Sim window: **File > Import**, choose **URDF**, and select:
    `/robot_description/urdf/soarm101_isaacsim.urdf`  
@@ -135,7 +135,7 @@ To convert URDF → USD without opening the GUI, use the project script (from th
       --out  /robot_description/usd/soarm101.usd
   ```
 
-  The stock `nvcr.io/nvidia/isaac-sim:5.1.0` image does not include `convert_urdf.py`; running `./scripts/setup_robot_usd.sh` from the host uses the same image and performs the conversion for you.
+  The stock `nvcr.io/nvidia/isaac-sim:6.2.0.1` image does not include `convert_urdf.py`; running `./scripts/setup_robot_usd.sh` from the host uses the same image and performs the conversion for you.
 
 **Manual conversion steps (once Isaac Sim is open, e.g. via Option A)**
 

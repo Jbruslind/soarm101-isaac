@@ -35,7 +35,7 @@ several sims to run one after another without reconnecting.
 
 ## Host prerequisites (one time)
 
-1. **NVIDIA driver** (≥ 580 recommended for Isaac Sim 5.1). Check: `nvidia-smi`.
+1. **NVIDIA driver** (≥ 580.95.05 for Isaac Sim 6.2; see [ISAAC_VERSIONS.md](ISAAC_VERSIONS.md)). Check: `nvidia-smi`.
 2. **Docker + NVIDIA Container Toolkit**:
    `docker run --rm --gpus all ubuntu nvidia-smi` should print the GPU.
 3. **uinput** for Moonlight keyboard/mouse:
@@ -96,17 +96,18 @@ Isaac Lab examples:
 
 ```bash
 # RL training: headless for speed
-./scripts/isaac.sh --headless /workspace/isaaclab/isaaclab.sh -p \
-    /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py --task Isaac-Reach-Franka-v0
+./scripts/isaac.sh --headless /workspace/isaaclab/isaaclab.sh train \
+    --rl_library rsl_rl --task Isaac-Reach-Franka physics=isaacsim_physx
 
 # Same policy, played back with a window you can watch
-./scripts/isaac.sh --gui /workspace/isaaclab/isaaclab.sh -p \
-    /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/play.py --task Isaac-Reach-Franka-Play-v0 --num_envs 4
+./scripts/isaac.sh --gui /workspace/isaaclab/isaaclab.sh play \
+    --rl_library rsl_rl --task Isaac-Reach-Franka --num_envs 4 --viz kit --checkpoint /PATH/TO/model.pt
 ```
 
-`isaac.sh` sets `HEADLESS=1` or `HEADLESS=0`, which Isaac Lab's `AppLauncher` honours.
-Your own scripts behave the same way as long as they build `AppLauncher` from
-`add_app_launcher_args`, or read `HEADLESS` like `sim_data_collector.py` does.
+`isaac.sh` sets `HEADLESS=1` or `HEADLESS=0`. Isaac Lab 3.0 opens a window only when a
+Kit visualizer is selected, so with `--gui` add `--viz kit` to Isaac Lab's own commands.
+This repo's scripts (`play_reach.py`, `sim_data_collector.py`, `interactive_inference.py`)
+select it automatically when `HEADLESS=0`.
 
 `--gui` fails with a clear message if the Sunshine container isn't running.
 

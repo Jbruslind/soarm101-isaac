@@ -59,30 +59,15 @@ if [ -f "$USD_DIR/soarm101.usd" ]; then
   exit 0
 fi
 
-echo "  Launching Isaac Sim container for URDF -> USD conversion..."
-docker run --rm --runtime=nvidia \
-  -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y \
+echo "  Launching the soarm-isaac-sim container for URDF -> USD conversion..."
+# Uses the project image (docker/isaac-sim) and its convert_urdf.py, which wraps the
+# Isaac Sim 6.x URDF importer through Isaac Lab's UrdfConverter.
+(cd "$PROJECT_DIR/docker" && docker compose --profile collect run --rm \
   -v "$PROJECT_DIR/robot_description:/robot_description" \
-  nvcr.io/nvidia/isaac-sim:5.1.0 \
-  bash -c '
-    python3 -c "
-import omni.kit.app
-from isaacsim.asset.importer.urdf import import_urdf, ImportConfig
-
-config = ImportConfig()
-config.fix_base = True
-config.make_instanceable = True
-config.merge_fixed_joints = True
-config.default_drive_type = 1  # position
-
-import_urdf(
-    \"/robot_description/urdf/soarm101_isaacsim.urdf\",
-    config,
-    \"/robot_description/usd/soarm101.usd\",
-)
-print(\"USD saved to /robot_description/usd/soarm101.usd\")
-"
-  ' 2>&1 || {
+  isaac-sim \
+  /isaac-sim/python.sh /usr/local/bin/convert_urdf.py \
+    --urdf /robot_description/urdf/soarm101_isaacsim.urdf \
+    --out /robot_description/usd/soarm101.usd) 2>&1 || {
     echo "  WARNING: Automated USD conversion failed."
     echo "  You can convert manually inside Isaac Sim:"
     echo "    File > Import > select soarm101_isaacsim.urdf"

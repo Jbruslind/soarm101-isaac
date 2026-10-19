@@ -13,7 +13,7 @@ on the **same machine** (Mode A) or on **separate machines** (Mode B).
 ```mermaid
 graph TD
     subgraph localMachine ["Local Machine  --  3080 Ti + 256 GB RAM"]
-        IsaacSim["Isaac Lab\nnvcr.io/nvidia/isaac-lab:2.1.0\n- Isaac Sim 5.1 + Isaac Lab 2.1\n- Physics sim (PhysX 5)\n- RTX camera rendering\n- Headless episode generation"]
+        IsaacSim["Isaac Lab\nsoarm-isaac-sim (docker/isaac-sim)\n- Isaac Sim 6.2 + Isaac Lab 3.0\n- Physics sim (PhysX 5)\n- RTX camera rendering\n- Headless episode generation"]
         ROS2["ROS2 Bridge\nros:humble-ros-base\n- VLA Bridge Node\n- Joint state / camera subscribers\n- Action publisher"]
         DataVol["data/episodes/\nLeRobot v3.0\nParquet + MP4 + JSON"]
         URDFVol["robot_description/\nURDF + STL + USD"]
@@ -104,7 +104,7 @@ Switching modes requires only changing `OPENPI_HOST` in `docker/.env`.
 
 | | |
 |---|---|
-| **Image** | `nvcr.io/nvidia/isaac-lab:2.1.0` (Isaac Sim 5.1 + Isaac Lab 2.1 pre-installed) |
+| **Image** | `soarm-isaac-sim:<ISAACSIM_VERSION>`: `nvcr.io/nvidia/isaac-sim:6.2.0.1` + Isaac Lab 3.0 built from a pinned commit (see [ISAAC_VERSIONS.md](ISAAC_VERSIONS.md)) |
 | **GPU** | Required (RT cores) |
 | **Dockerfile** | `docker/isaac-sim/Dockerfile` |
 | **Volumes** | `robot_description`, `isaac_envs`, `data` |
