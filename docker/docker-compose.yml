@@ -132,6 +132,58 @@ services:
     restart: "no"
 
   # ---------------------------------------------------------------------------
+  # Sunshine: headless NVIDIA X display + Moonlight game-stream host
+  # Long-running; start once with ./scripts/sunshine.sh up. Isaac Sim launched
+  # with --gui (docker-compose.gui.yml) draws its window on this display.
+  # See docs/SUNSHINE_STREAMING.md.
+  # ---------------------------------------------------------------------------
+  sunshine:
+    profiles: ["gui"]
+    build:
+      context: ./sunshine
+      dockerfile: Dockerfile
+      args:
+        SUNSHINE_VERSION: ${SUNSHINE_VERSION:-2026.914.233613}
+    image: soarm-sunshine
+    container_name: soarm-sunshine
+    runtime: nvidia
+    network_mode: host
+    ipc: host
+    tty: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - DISPLAY=${SOARM_DISPLAY:-:0}
+      - DISPLAY_WIDTH=${SUNSHINE_DISPLAY_WIDTH:-1920}
+      - DISPLAY_HEIGHT=${SUNSHINE_DISPLAY_HEIGHT:-1080}
+      - DISPLAY_REFRESH=${SUNSHINE_DISPLAY_REFRESH:-60}
+      - NVIDIA_OUTPUT=${SUNSHINE_NVIDIA_OUTPUT:-DFP-0}
+      - SUNSHINE_NAME=${SUNSHINE_NAME:-soarm-isaac}
+      - SUNSHINE_USER=${SUNSHINE_USER:-}
+      - SUNSHINE_PASS=${SUNSHINE_PASS:-}
+      - SUNSHINE_CSRF_ORIGINS=${SUNSHINE_CSRF_ORIGINS:-}
+    # Moonlight input: Sunshine creates uinput devices; the host's udev publishes them
+    # under /dev/input, which Xorg in this container picks up via /run/udev.
+    devices:
+      - /dev/uinput:/dev/uinput
+    device_cgroup_rules:
+      - "c 13:* rmw"
+    volumes:
+      - x11-unix:/tmp/.X11-unix
+      - /dev/input:/dev/input
+      - /run/udev:/run/udev:ro
+      - sunshine-config:/root/.config/sunshine
+      - sunshine-xorg-modules:/var/cache/nvidia-xorg
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
   # Training: LoRA/QLoRA fine-tuning of pi0/pi0-FAST
   # Runs exclusively (no other GPU containers) in Mode A
   # ---------------------------------------------------------------------------
@@ -171,4 +223,7 @@ volumes:
   isaac-cache-glcache:
   isaac-cache-compute:
   isaac-logs:
+  x11-unix:     # X server socket shared between sunshine and isaac-sim --gui
+  sunshine-config:
+  sunshine-xorg-modules:
   vla_signals:  # shared so bridge can read prompt/enabled when Isaac Sim has no ROS2

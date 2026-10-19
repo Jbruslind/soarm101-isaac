@@ -9,25 +9,34 @@
 #   ./scripts/eval_sim.sh --remote gpu-server.com  # remote inference
 #   ./scripts/eval_sim.sh --watch                  # live-view via WebRTC
 #   ./scripts/eval_sim.sh --watch --public-ip 192.168.1.50
+#   ./scripts/eval_sim.sh --gui                    # watch via Sunshine/Moonlight
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# shellcheck source=_gui.sh
+source "$SCRIPT_DIR/_gui.sh"
 
 REMOTE_HOST=""
 WATCH=""
+GUI=""
 PUBLIC_IP=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --remote) REMOTE_HOST="$2"; shift 2 ;;
         --watch) WATCH=1; shift ;;
+        --gui) GUI=1; shift ;;
         --public-ip) PUBLIC_IP="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
 
 cd "$PROJECT_DIR/docker"
+
+if [[ -n "$GUI" ]]; then
+    gui_enable "$PROJECT_DIR/docker"
+fi
 
 WATCH_ENV=""
 if [[ -n "$WATCH" ]]; then

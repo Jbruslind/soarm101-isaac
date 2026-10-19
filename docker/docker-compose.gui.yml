@@ -1,0 +1,19 @@
+# GUI overlay for Isaac Sim: render a normal desktop window on the X display
+# served by the `sunshine` container instead of running headless/WebRTC.
+#
+# Used by the --gui flag of the scripts in ../scripts (they set COMPOSE_FILE), or by hand:
+#   docker compose --profile gui up -d sunshine
+#   docker compose -f docker-compose.yml -f docker-compose.gui.yml --profile collect run --rm isaac-sim ...
+services:
+  isaac-sim:
+    ipc: host
+    environment:
+      - DISPLAY=${SOARM_DISPLAY:-:0}
+      - HEADLESS=0
+      - ISAAC_SIM_HEADLESS=0
+      - LIVESTREAM=0
+    volumes:
+      - x11-unix:/tmp/.X11-unix
+
+volumes:
+  x11-unix:

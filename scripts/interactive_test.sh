@@ -15,6 +15,7 @@
 #   ./scripts/interactive_test.sh --remote gpu-server.example.com           # remote inference (port 8443)
 #   ./scripts/interactive_test.sh --remote 192.168.1.100 --port 8000         # remote OpenVLA on port 8000
 #   VLA_AUTO_STOP_SEC=300 ./scripts/interactive_test.sh --remote HOST        # lengthen Execute auto-stop (default 120s)
+#   ./scripts/interactive_test.sh --gui --sim-only                          # view via Sunshine/Moonlight instead of WebRTC
 #
 # Prerequisites:
 #   - NVIDIA GPU with NVENC support (RTX series; A100 NOT supported)
@@ -29,11 +30,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# shellcheck source=_gui.sh
+source "$SCRIPT_DIR/_gui.sh"
 
 PUBLIC_IP=""
 MODEL_CONFIG="soarm_pi0_fast"
 CHECKPOINT=""
 SIM_ONLY=0
+GUI=0
 REMOTE_HOST=""
 REMOTE_PORT="8443"
 ROS2_GRAPH_MODE="soarm"
@@ -47,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --model-config) MODEL_CONFIG="$2"; shift 2 ;;
         --checkpoint) CHECKPOINT="$2"; shift 2 ;;
         --sim-only) SIM_ONLY=1; shift ;;
+        --gui) GUI=1; shift ;;
         --remote) REMOTE_HOST="$2"; shift 2 ;;
         --port) REMOTE_PORT="$2"; shift 2 ;;
         --ros2-graph-mode) ROS2_GRAPH_MODE="$2"; shift 2 ;;
@@ -144,22 +149,34 @@ echo "    If that times out, use the correct LAN IP of this host (not 127.0.0.1)
 echo "    in the firewall (e.g. sudo ufw allow ${PHOSPHO_PORT}/tcp)."
 echo "    Control the robot with keyboard/gamepad, view cameras, send VLA commands."
 echo ""
-echo "  Isaac Sim WebRTC (optional, for full 3D viewport):"
-echo "    1. Open the Isaac Sim WebRTC Streaming Client."
-echo "    2. Enter server address: $PUBLIC_IP"
-echo "    3. Click Connect."
-echo "    4. Use the 'VLA Interactive Test' panel to send commands."
-echo ""
-echo "  Ports required: TCP 49100, UDP 47998, TCP ${PHOSPHO_PORT} (host networking)."
-echo "  Note: only one WebRTC client can connect at a time."
+if [[ $GUI -eq 1 ]]; then
+    echo "  Isaac Sim GUI (Sunshine / Moonlight):"
+    echo "    Open 'SO-ARM Isaac Desktop' on host $PUBLIC_IP in Moonlight and use the"
+    echo "    'VLA Interactive Test' panel to send commands."
+else
+    echo "  Isaac Sim WebRTC (optional, for full 3D viewport):"
+    echo "    1. Open the Isaac Sim WebRTC Streaming Client."
+    echo "    2. Enter server address: $PUBLIC_IP"
+    echo "    3. Click Connect."
+    echo "    4. Use the 'VLA Interactive Test' panel to send commands."
+    echo ""
+    echo "  Ports required: TCP 49100, UDP 47998, TCP ${PHOSPHO_PORT} (host networking)."
+    echo "  Note: only one WebRTC client can connect at a time."
+fi
 echo ""
 
 cd "$PROJECT_DIR/docker"
 
+if [[ $GUI -eq 1 ]]; then
+    gui_enable "$PROJECT_DIR/docker"
+fi
+
 # Build environment variable overrides
 EXTRA_ENV=()
-EXTRA_ENV+=(-e ISAAC_SIM_HEADLESS=1)
-EXTRA_ENV+=(-e LIVESTREAM=2)
+if [[ $GUI -eq 0 ]]; then
+    EXTRA_ENV+=(-e ISAAC_SIM_HEADLESS=1)
+    EXTRA_ENV+=(-e LIVESTREAM=2)
+fi
 EXTRA_ENV+=(-e "PUBLIC_IP=$PUBLIC_IP")
 EXTRA_ENV+=(-e ENABLE_CAMERAS=1)
 EXTRA_ENV+=(-e PYTHONUNBUFFERED=1)

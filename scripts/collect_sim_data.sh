@@ -7,6 +7,7 @@
 #   ./scripts/collect_sim_data.sh --no-camera              # skip video recording
 #   ./scripts/collect_sim_data.sh --watch                   # live-view via WebRTC
 #   ./scripts/collect_sim_data.sh --watch --public-ip 192.168.1.50
+#   ./scripts/collect_sim_data.sh --gui                     # watch via Sunshine/Moonlight
 #
 # Cameras are ON by default (required for VLA training).  Each episode
 # produces two MP4 files in data/episodes/videos/:
@@ -17,16 +18,22 @@
 # real time via the Isaac Sim WebRTC Streaming Client. Implies --wait so you
 # have time to connect before collection starts. Requires an NVENC-capable GPU
 # (RTX series; A100 is NOT supported).
+#
+# Use --gui instead to render a normal Isaac Sim window on the Sunshine display
+# (./scripts/sunshine.sh up) and watch it from Moonlight. Also implies --wait.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# shellcheck source=_gui.sh
+source "$SCRIPT_DIR/_gui.sh"
 
 ENV_TYPE="reach"
 NUM_EPISODES=50
 NO_CAMERA=""
 WAIT_FOR_KEY=""
 WATCH=""
+GUI=""
 PUBLIC_IP=""
 
 while [[ $# -gt 0 ]]; do
@@ -36,10 +43,16 @@ while [[ $# -gt 0 ]]; do
         --no-camera) NO_CAMERA="--no-camera"; shift ;;
         --wait) WAIT_FOR_KEY="--wait-for-key"; shift ;;
         --watch) WATCH=1; shift ;;
+        --gui) GUI=1; shift ;;
         --public-ip) PUBLIC_IP="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
+
+if [[ -n "$WATCH" && -n "$GUI" ]]; then
+    echo "Use either --watch (WebRTC) or --gui (Sunshine), not both."
+    exit 1
+fi
 
 # --watch implies --wait so the user can connect before collection begins.
 if [[ -n "$WATCH" ]]; then
@@ -50,6 +63,13 @@ if [[ -n "$WATCH" ]]; then
 fi
 
 echo "=== Collecting $NUM_EPISODES episodes (env=$ENV_TYPE) ==="
+
+if [[ -n "$GUI" ]]; then
+    WAIT_FOR_KEY="--wait-for-key"
+    gui_enable "$PROJECT_DIR/docker"
+    echo "  Once you see the robot in Moonlight, press Enter here to start collection."
+    echo ""
+fi
 
 if [[ -n "$WATCH" ]]; then
     echo ""
@@ -69,7 +89,9 @@ cd "$PROJECT_DIR/docker"
 
 # Build environment variable flags for docker compose run.
 EXTRA_ENV=()
-EXTRA_ENV+=(-e ISAAC_SIM_HEADLESS=1)
+if [[ -z "$GUI" ]]; then
+    EXTRA_ENV+=(-e ISAAC_SIM_HEADLESS=1)
+fi
 EXTRA_ENV+=(-e PYTHONUNBUFFERED=1)
 if [[ -z "$NO_CAMERA" ]]; then
     EXTRA_ENV+=(-e ENABLE_CAMERAS=1)
