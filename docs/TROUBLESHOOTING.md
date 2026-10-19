@@ -434,7 +434,7 @@ If the OpenPi server on the Jetson is up (`server listening on 0.0.0.0:8000`) bu
    ```bash
    ./scripts/interactive_test.sh --remote <JETSON_IP>
    ```
-   Use the Jetson’s real IP or hostname (e.g. `192.168.1.50` or `jbruslind-xavier` only if it resolves from the client). If you use **port 8000** (direct to OpenPi) instead of 8443 (Caddy):
+   Use the Jetson’s real IP or hostname (e.g. `192.168.1.50` or `<jetson-hostname>` only if it resolves from the client). If you use **port 8000** (direct to OpenPi) instead of 8443 (Caddy):
    ```bash
    ./scripts/interactive_test.sh --remote <JETSON_IP> --port 8000
    ```
