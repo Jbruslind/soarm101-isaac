@@ -57,3 +57,6 @@ core.*
 .bash_history
 *.sh.env
 robot_description/urdf/soarm101_isaacsim/
+
+# LeRobot training outputs (scripts/train_lerobot.sh)
+data/checkpoints/

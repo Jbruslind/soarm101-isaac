@@ -221,6 +221,43 @@ services:
               capabilities: [gpu]
     restart: "no"
 
+  # ---------------------------------------------------------------------------
+  # LeRobot: SmolVLA / ACT fine-tuning and offline inference (lerobot 0.6.1)
+  # Use scripts/train_lerobot.sh. Needs the whole 12 GB GPU: stop Isaac Sim first.
+  # See docs/LEROBOT_TRAINING.md.
+  # ---------------------------------------------------------------------------
+  lerobot:
+    profiles: ["train-lerobot"]
+    build:
+      context: ./lerobot
+      dockerfile: Dockerfile
+      args:
+        LEROBOT_VERSION: ${LEROBOT_VERSION:-0.6.1}
+    image: soarm-lerobot:${LEROBOT_VERSION:-0.6.1}
+    container_name: soarm-lerobot
+    runtime: nvidia
+    # Run as the host user so checkpoints under data/ are not root-owned.
+    user: "${SOARM_UID:-1000}:${SOARM_GID:-1000}"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - SOARM_LOGGER=${SOARM_LOGGER:-tensorboard}
+      - PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-expandable_segments:True}
+    volumes:
+      - ../data:/workspace/data:rw
+      - lerobot-hf-cache:/hf-cache
+    # DataLoader workers pass decoded frames through shared memory.
+    shm_size: "16g"
+    working_dir: /workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: "no"
+
 volumes:
   isaac-cache-kit:
   isaac-cache-ov:
@@ -231,4 +268,5 @@ volumes:
   x11-unix:     # X server socket shared between sunshine and isaac-sim --gui
   sunshine-config:
   sunshine-xorg-modules:
+  lerobot-hf-cache:  # HF hub + LeRobot dataset cache (models, datasets) for the lerobot service
   vla_signals:  # shared so bridge can read prompt/enabled when Isaac Sim has no ROS2
