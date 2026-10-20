@@ -239,48 +239,140 @@ def _setup_ik_controller(robot, device, command_type: str = "position"):
     return ik_controller, arm_joint_ids, ee_body_id, ee_jacobi_idx
 
 
+def respect_joint_limits(
+    q_target: torch.Tensor,
+    q: torch.Tensor,
+    jacobian: torch.Tensor,
+    pos_err: torch.Tensor,
+    limits: torch.Tensor,
+    lam: float = 0.01,
+) -> torch.Tensor:
+    """Clamp an IK joint target to the joint limits and re-solve the position with the other joints.
+
+    The pose IK doesn't know the joint limits. Close to the base, a top-down gripper needs
+    wrist_flex past its 95 deg limit; the IK keeps asking for more wrist_flex, the joint stays
+    at the limit, and the arm stalls 2-4 cm short of the cube. Here the joints past a limit are
+    held at it, and the remaining joints track the position error by damped least squares, using
+    the position rows of ``jacobian``. The gripper then tilts a few degrees instead of missing
+    the cube.
+
+    Shapes: q_target, q (N, J); jacobian (N, 6, J); pos_err (N, 3); limits (N, J, 2).
+    """
+    clamped = q_target.clamp(limits[..., 0], limits[..., 1])
+    hit = clamped != q_target
+    if not hit.any():
+        return q_target
+    out = clamped.clone()
+    for i in range(q.shape[0]):
+        free = ~hit[i]
+        if not free.any():
+            continue
+        jp = jacobian[i, :3]
+        # position change still needed after the clamped joints move to their (clamped) targets
+        err = pos_err[i] - jp[:, ~free] @ (clamped[i, ~free] - q[i, ~free])
+        jf = jp[:, free]
+        dq = jf.T @ torch.linalg.solve(jf @ jf.T + lam**2 * torch.eye(3, device=q.device), err)
+        out[i, free] = (q[i, free] + dq).clamp(limits[i, free, 0], limits[i, free, 1])
+    return out
+
+
 class ScriptedPick:
     """Waypoint state machine for the pick task, driven by differential IK in pose mode.
 
     Phases: hover above the cube with the gripper open, descend, close, lift, carry over
     the place target, lower, open.  ``step`` returns the EE goal pose (world frame) and the
     gripper joint goal for the current phase.  The gripper is held top-down (gripper_frame_link
-    +z pointing down) with its x axis pointing back at the robot, so the jaws open radially;
-    position-only IK lets the wrist pitch drift and the jaws then land on top of the cube.
+    +z pointing down) with its x axis pointing back at the robot, so the jaws open roughly
+    radially. The wrist is turned (``dyaw``) so the jaws close square on the cube faces.
+    Position-only IK lets the wrist pitch drift, and the jaws then land on top of the cube.
+    The collector clamps the IK to the joint limits with :func:`respect_joint_limits`.
 
-    Experimental: the jaws straddle and close on the cube and lift it a few cm, but it slips
-    out during the lift, so place success is still ~0 (see GitHub issue #22). Pick episodes
-    from this policy are attempts, not usable demonstrations yet.
+    Measured (GitHub issue #28; 3 cm cube, default spawn area, ``SoarmReachEnvCfg`` PhysX
+    settings with ``solve_articulation_contact_last``): 20/20 placed headless without cameras,
+    5/5 with cameras. Earlier runs while tuning, without the joint-limit clamp, placed
+    15-18/20; the misses were cubes near the base. The grasp holds (the jaw stalls at
+    0.23-0.25 rad) and the cube is lifted ~8 cm. With the contact-last flag off, 1/10 placed.
     """
 
     HOVER_Z = 0.08      # m above the table while moving
-    GRASP_Z = 0.010     # gripper_frame_link (jaw tip) height when grasping; lower and the
-                        # tips drag on the table, which stalls the IK short of the cube
+    GRASP_Z = 0.010     # gripper_frame_link height when grasping. The jaw tips reach ~7 mm
+                        # below that frame, so lower and they drag on the table and stall the IK
     PLACE_Z = 0.012
-    GRASP_OFFSET = 0.025  # m along the gripper x axis, to centre the cube between the jaws
+    # Cube centre along the gripper x axis (towards the fixed jaw is +x), from the jaw meshes:
+    # the fixed jaw's inner face is at x = +2..+4 mm over the cube's height, so a 3 cm cube
+    # touching it sits at x = -13 mm. -16 mm leaves the fixed jaw ~3 mm clear while descending;
+    # the closing moving jaw then pushes the cube against it.
+    GRASP_OFFSET = 0.016
     MAX_SPEED = 0.01    # m per step the commanded EE goal may move
-    OPEN, CLOSED = 1.0, 0.0  # gripper joint goals (rad)
-    # (name, gripper goal, steps to hold after the EE is within tol, max steps in phase)
+    HOVER_TOL = 0.004   # m, EE position tolerance above the cube (other phases use ``tol``)
+    OPEN = 1.0          # gripper joint goal (rad) while approaching and releasing
+    # Gripper goal while holding: below the angle where the jaws touch the cube, so the jaw
+    # keeps squeezing. The jaw meshes give a 30 mm gap at ~0.2 rad at the tips; with the
+    # collision shapes the closing jaw stalls on the 3 cm cube at 0.23-0.25 rad (measured).
+    # The old goal of 0 was not the problem by itself: the env's action clamp limits the jaw
+    # target to 0.05 rad past its position, ~4 N m of squeeze either way. The grasp failed
+    # because the PhysX solver let the jaw drive push through the contacts (fixed with
+    # solve_articulation_contact_last in SoarmReachEnvCfg.sim) and because the jaws closed on
+    # the cube at an angle (fixed by aligning the wrist with the cube faces).
+    GRIP_CONTACT = 0.24  # rad, jaws on the 3 cm cube
+    GRIP_SQUEEZE = 0.14  # rad below contact (goal 0.10 rad)
+    # (name, gripper goal ("open"/"closed"), steps to hold after the EE is within tol,
+    # max steps in phase)
     PHASES = [
-        ("hover", OPEN, 3, 90), ("descend", OPEN, 5, 45), ("close", CLOSED, 30, 30),
-        ("lift", CLOSED, 0, 40), ("carry", CLOSED, 0, 60), ("lower", CLOSED, 5, 40),
-        ("release", OPEN, 15, 15),
+        ("hover", "open", 3, 90), ("descend", "open", 5, 45), ("close", "closed", 45, 45),
+        ("lift", "closed", 0, 40), ("carry", "closed", 0, 60), ("lower", "closed", 5, 40),
+        ("release", "open", 15, 15),
     ]
 
-    def __init__(self, cube_w: torch.Tensor, place_w: torch.Tensor, tol: float = 0.01):
+    def __init__(
+        self,
+        cube_w: torch.Tensor,
+        place_w: torch.Tensor,
+        tol: float = 0.01,
+        grip_contact: float | None = None,
+        grip_squeeze: float | None = None,
+        grasp_offset: float | None = None,
+        cube_quat_w: torch.Tensor | None = None,
+    ):
         self.cube_w, self.place_w, self.tol = cube_w.clone(), place_w.clone(), tol
+        # Turn the wrist so the jaws close square on the cube's faces: closing on a cube that
+        # sits at an angle in the jaws catches its edges and squeezes it out. The gripper
+        # x axis yaw is the cube face direction (every 90 deg) nearest the default "x towards
+        # the base"; the same yaw offset is kept for the rest of the episode.
+        self.dyaw = torch.zeros(cube_w.shape[0], device=cube_w.device)
+        if cube_quat_w is not None:
+            from isaaclab.utils.math import yaw_quat, euler_xyz_from_quat
+
+            cube_yaw = euler_xyz_from_quat(yaw_quat(cube_quat_w))[2]
+            default_yaw = torch.atan2(cube_w[:, 1], cube_w[:, 0]) + torch.pi
+            quarter = torch.pi / 2
+            self.dyaw = torch.remainder(cube_yaw - default_yaw + quarter / 2, quarter) - quarter / 2
+        contact = self.GRIP_CONTACT if grip_contact is None else grip_contact
+        squeeze = self.GRIP_SQUEEZE if grip_squeeze is None else grip_squeeze
+        self.gripper_goals = {"open": self.OPEN, "closed": contact - squeeze}
+        self.grasp_offset = self.GRASP_OFFSET if grasp_offset is None else grasp_offset
         self.phase, self.t, self.settled = 0, 0, 0
         self.cmd = self.grasp_pos = None
 
+    @property
+    def phase_name(self) -> str:
+        return self.PHASES[self.phase][0]
+
     @staticmethod
-    def top_down_quat(pos_w: torch.Tensor) -> torch.Tensor:
-        """(x, y, z, w) orientation with z down and x pointing from ``pos_w`` towards the base."""
+    def x_yaw(pos_w: torch.Tensor, dyaw: torch.Tensor | float = 0.0) -> torch.Tensor:
+        """Yaw of the gripper x axis at ``pos_w``: pointing towards the base, turned by ``dyaw``."""
+        return torch.atan2(pos_w[:, 1], pos_w[:, 0]) + torch.pi + dyaw
+
+    @staticmethod
+    def top_down_quat(pos_w: torch.Tensor, dyaw: torch.Tensor | float = 0.0) -> torch.Tensor:
+        """(x, y, z, w) orientation with z down and x pointing from ``pos_w`` towards the base,
+        turned by ``dyaw`` about the vertical."""
         from isaaclab.utils.math import quat_from_matrix
 
-        yaw = torch.atan2(pos_w[:, 1], pos_w[:, 0])
+        yaw = ScriptedPick.x_yaw(pos_w, dyaw)
         c, s, zero = torch.cos(yaw), torch.sin(yaw), torch.zeros_like(yaw)
-        x_axis = torch.stack([-c, -s, zero], -1)
-        y_axis = torch.stack([-s, c, zero], -1)
+        x_axis = torch.stack([c, s, zero], -1)
+        y_axis = torch.stack([s, -c, zero], -1)
         z_axis = torch.stack([zero, zero, -torch.ones_like(yaw)], -1)
         return quat_from_matrix(torch.stack([x_axis, y_axis, z_axis], -1))
 
@@ -296,17 +388,22 @@ class ScriptedPick:
                 goal[:, 2] = self.HOVER_Z
             return goal
         goal = (self.cube_w if name in ("hover", "descend") else self.place_w).clone()
-        radial = goal[:, :2] / goal[:, :2].norm(dim=-1, keepdim=True)
-        goal[:, :2] -= self.GRASP_OFFSET * radial  # +x of the top-down gripper is -radial
+        yaw = self.x_yaw(goal, self.dyaw)
+        # the cube sits at x = -grasp_offset in the gripper frame
+        goal[:, :2] += self.grasp_offset * torch.stack([torch.cos(yaw), torch.sin(yaw)], -1)
         goal[:, 2] = {"descend": self.GRASP_Z, "lower": self.PLACE_Z,
                       "release": self.PLACE_Z}.get(name, self.HOVER_Z)
         return goal
 
     def step(self, ee_pos_w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, float]:
-        _, gripper, hold, max_steps = self.PHASES[self.phase]
+        _, gripper_state, hold, max_steps = self.PHASES[self.phase]
+        gripper = self.gripper_goals[gripper_state]
         self.cmd = ee_pos_w.clone() if self.cmd is None else self.cmd
         goal = self._goal(ee_pos_w)
-        if torch.norm(ee_pos_w - goal, dim=-1).item() < self.tol:
+        # Line up tightly above the cube before descending: the fixed jaw only clears the cube by
+        # ~3 mm, and a 1 cm miss lands it on top of the cube.
+        tol = self.HOVER_TOL if self.phase_name == "hover" else self.tol
+        if torch.norm(ee_pos_w - goal, dim=-1).item() < tol:
             self.settled += 1
         self.t += 1
         if (self.settled > hold or self.t >= max_steps) and self.phase < len(self.PHASES) - 1:
@@ -314,7 +411,7 @@ class ScriptedPick:
         # Move the commanded goal at a bounded speed so the arm doesn't fling the cube.
         delta = goal - self.cmd
         self.cmd = self.cmd + delta * (self.MAX_SPEED / delta.norm(dim=-1, keepdim=True).clamp(min=self.MAX_SPEED))
-        return self.cmd, self.top_down_quat(self.cmd), gripper
+        return self.cmd, self.top_down_quat(self.cmd, self.dyaw), gripper
 
 
 def collect_episodes(
@@ -323,8 +420,12 @@ def collect_episodes(
     output_dir: str,
     use_camera: bool,
     wait_for_key: bool,
+    pick_kwargs: dict | None = None,
 ):
-    """Run data collection loop with an IK-based scripted policy."""
+    """Run data collection loop with an IK-based scripted policy.
+
+    ``pick_kwargs`` are passed to :class:`ScriptedPick` (grip_contact, grip_squeeze, grasp_offset).
+    """
 
     livestream = os.environ.get("LIVESTREAM") in ("1", "2")
     # --gui (scripts/_gui.sh) sets HEADLESS=0 and DISPLAY to the Sunshine X display.
@@ -403,7 +504,10 @@ def collect_episodes(
     for ep in range(num_episodes):
         obs, info = env.reset()
         target_w = env.target_pos.clone()
-        pick = ScriptedPick(env.cube_pos_w, target_w) if env_type == "pick" else None
+        pick = None
+        if env_type == "pick":
+            pick = ScriptedPick(env.cube_pos_w, target_w, cube_quat_w=env.cube_quat_w, **(pick_kwargs or {}))
+        grip_q_lift, cube_z_max = float("nan"), 0.0
         gripper_goal = None
         target_quat_w = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=env.device)  # (x, y, z, w)
 
@@ -430,6 +534,11 @@ def collect_episodes(
             arm_joint_pos = robot.data.joint_pos.torch[:, arm_joint_ids]
             if pick is not None:
                 target_w, target_quat_w, gripper_goal = pick.step(ee_pos_w)
+                # Diagnostics: where the jaw stalled on the cube, and how high the cube got
+                if pick.phase_name == "lift" and grip_q_lift != grip_q_lift:
+                    grip_q_lift = robot.data.joint_pos.torch[0, -1].item()
+                if pick.phase_name in ("lift", "carry"):
+                    cube_z_max = max(cube_z_max, env.cube_pos_w[0, 2].item())
             # Measured before stepping: on the final step the env auto-resets the robot.
             ee_dist = torch.norm(ee_pos_w - target_w, dim=-1).item()
 
@@ -454,6 +563,11 @@ def collect_episodes(
             arm_joint_target = ik_controller.compute(
                 ee_pos_b, ee_quat_b, jacobian, arm_joint_pos
             )
+            if pick is not None:
+                arm_joint_target = respect_joint_limits(
+                    arm_joint_target, arm_joint_pos, jacobian, target_b - ee_pos_b,
+                    robot.data.soft_joint_pos_limits.torch[:, arm_joint_ids],
+                )
 
             # Build full 6-DOF joint target (gripper held for reach, scripted for pick)
             full_joint_target = robot.data.joint_pos.torch.clone()
@@ -495,7 +609,8 @@ def collect_episodes(
         # of the target), so a terminated episode means success.
         if pick is not None:
             reached = bool(terminated.any())
-            status = "PLACED" if reached else f"failed in phase {pick.PHASES[pick.phase][0]}"
+            status = "PLACED" if reached else f"failed in phase {pick.phase_name}"
+            status += f"; jaw {grip_q_lift:.2f} rad at lift, cube up to {cube_z_max * 100:.1f} cm"
         else:
             reached = bool(terminated.any()) or ee_dist < cfg.success_threshold
             status = "REACHED" if reached else f"dist={ee_dist:.3f}m"
@@ -523,6 +638,15 @@ def main():
         action="store_true",
         help="Wait for Enter after the app + environment are loaded (useful for WebRTC viewing).",
     )
+    parser.add_argument("--grip-contact", type=float, default=None,
+                        help="Pick: gripper angle (rad) where the jaws touch the cube "
+                             f"(default {ScriptedPick.GRIP_CONTACT}).")
+    parser.add_argument("--grip-squeeze", type=float, default=None,
+                        help="Pick: how far (rad) below the contact angle to command the jaw "
+                             f"(default {ScriptedPick.GRIP_SQUEEZE}).")
+    parser.add_argument("--grasp-offset", type=float, default=None,
+                        help="Pick: cube centre offset (m) along -x of gripper_frame_link "
+                             f"(default {ScriptedPick.GRASP_OFFSET}).")
     args = parser.parse_args()
 
     collect_episodes(
@@ -531,6 +655,8 @@ def main():
         args.output_dir,
         use_camera=not args.no_camera,
         wait_for_key=args.wait_for_key,
+        pick_kwargs=dict(grip_contact=args.grip_contact, grip_squeeze=args.grip_squeeze,
+                         grasp_offset=args.grasp_offset),
     )
 
 

@@ -101,6 +101,11 @@ class SoarmPickEnv(SoarmReachEnv):
         """Cube position(s) in world frame, shape ``(num_envs, 3)``."""
         return self._cube.data.root_pos_w.torch
 
+    @property
+    def cube_quat_w(self) -> torch.Tensor:
+        """Cube orientation(s) in world frame, (x, y, z, w), shape ``(num_envs, 4)``."""
+        return self._cube.data.root_quat_w.torch
+
     def _setup_scene(self):
         super()._setup_scene()
         self._use_convex_decomposition_for_jaws()

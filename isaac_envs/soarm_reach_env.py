@@ -27,6 +27,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 from isaaclab.sensors import CameraCfg, Camera
+from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import (
     PhysxArticulationRootPropertiesCfg,
     PhysxCollisionPropertiesCfg,
@@ -99,6 +100,17 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120.0,
         render_interval=2,
+        # PhysX scene settings from Isaac Lab's SO-101 cube-stack task (contrib/stack/stack_env_cfg.py).
+        # solve_articulation_contact_last resolves contacts after the joint drives, so object contacts
+        # stall the position-driven jaw instead of the jaw tunnelling into a grasped object (Isaac Lab
+        # 3.0 CHANGELOG; GitHub issue #28). It doesn't change free-space (reach) motion.
+        physics=PhysxCfg(
+            solve_articulation_contact_last=True,
+            bounce_threshold_velocity=0.01,
+            friction_correlation_distance=0.00625,
+            gpu_found_lost_aggregate_pairs_capacity=1024 * 1024 * 4,
+            gpu_total_aggregate_pairs_capacity=2**21,
+        ),
         default_visualizer_cfg=KitVisualizerCfg(
             origin_type="asset",
             origin_track_path="robot",
