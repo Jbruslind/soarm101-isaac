@@ -21,6 +21,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, Articulation
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
+from isaaclab.envs.ui import BaseEnvWindow
 from isaaclab.markers import VisualizationMarkersCfg, VisualizationMarkers
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
@@ -51,6 +52,35 @@ ARM_JOINT_NAMES = SOARM_JOINT_NAMES[:NUM_ARM_JOINTS]
 EE_BODY_NAME = "gripper_frame_link"
 
 
+class SoarmEnvWindow(BaseEnvWindow):
+    """IsaacLab UI window whose "Follow Mode" dropdown matches the Kit visualizer config.
+
+    Isaac Lab 3.0's ``BaseEnvWindow`` always builds that dropdown on "World", whatever
+    ``KitVisualizerCfg.origin_type`` says, so the window claimed "World" while the camera was
+    tracking the robot. This selects the configured entry instead.
+    """
+
+    def _build_viewer_frame(self):
+        super()._build_viewer_frame()
+        viz = self._get_kit_visualizer()
+        if viz is None:
+            return
+        if viz.cfg.origin_type == "env":
+            option = "Env"
+        elif viz.cfg.origin_type == "asset" and viz.cfg.origin_track_path:
+            option = viz.cfg.origin_track_path.partition("/")[0]
+        else:
+            return
+        if option not in self._viewer_assets_options:
+            return
+        # Selecting the entry runs the UI callback, which resets origin_track_path to the bare
+        # asset name; keep a configured body ("robot/<body>").
+        track_path = viz.cfg.origin_track_path
+        model = self.ui_window_elements["viewer_follow"]
+        model.get_item_value_model().set_value(self._viewer_assets_options.index(option))
+        viz.cfg.origin_track_path = track_path
+
+
 @configclass
 class SoarmReachEnvCfg(DirectRLEnvCfg):
     """Configuration for the SO-ARM101 reach task."""
@@ -68,6 +98,7 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
         ),
     )
     decimation: int = 4  # policy runs at 30 Hz
+    ui_window_class_type: type | None = SoarmEnvWindow
 
     # Episode
     episode_length_s: float = 5.0
