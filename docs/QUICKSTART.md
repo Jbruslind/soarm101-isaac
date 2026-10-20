@@ -207,7 +207,7 @@ After collection, inspect the output:
 ```bash
 ls data/episodes/meta/          # info.json, stats.json, episodes/
 ls data/episodes/data/          # Parquet shards
-ls data/episodes/videos/        # per-episode MP4s (wrist + third_person per episode)
+ls data/episodes/videos/        # per-episode MP4s (wrist + overhead per episode)
 cat data/episodes/meta/info.json
 ```
 

@@ -34,8 +34,9 @@ except ImportError:
     av = None
 
 
-FPS = 30
-IMAGE_SIZE = 224
+from soarm_common import contract as C
+
+FPS = C.DATASET_FPS  # one frame per control step
 
 LANGUAGE_INSTRUCTIONS = {
     "reach": "move the robot arm to the green target",
@@ -80,23 +81,16 @@ class LeRobotWriter:
             "frame_index": len(self._current_frames),
             "index": self.global_frame_idx,
             "timestamp": timestamp or (len(self._current_frames) / self.fps),
-            "language_instruction": language_instruction,
+            C.DATASET_TASK_KEY: language_instruction,
         }
 
-        for i, name in enumerate([
-            "shoulder_pan", "shoulder_lift", "elbow_flex",
-            "wrist_flex", "wrist_roll", "gripper",
-        ]):
-            frame[f"observation.state.{name}"] = float(state[i]) if i < len(state) else 0.0
+        for i, name in enumerate(C.JOINT_NAMES):
+            frame[f"{C.DATASET_STATE_KEY}.{name}"] = float(state[i]) if i < len(state) else 0.0
+        for i, name in enumerate(C.JOINT_NAMES):
+            frame[f"{C.DATASET_ACTION_KEY}.{name}"] = float(action[i]) if i < len(action) else 0.0
 
-        for i, name in enumerate([
-            "shoulder_pan", "shoulder_lift", "elbow_flex",
-            "wrist_flex", "wrist_roll", "gripper",
-        ]):
-            frame[f"action.{name}"] = float(action[i]) if i < len(action) else 0.0
-
-        frame["observation.state"] = state.tolist()
-        frame["action"] = action.tolist()
+        frame[C.DATASET_STATE_KEY] = state.tolist()
+        frame[C.DATASET_ACTION_KEY] = action.tolist()
 
         self._current_frames.append(frame)
         self.global_frame_idx += 1
@@ -106,12 +100,13 @@ class LeRobotWriter:
                 self._write_video_frame(cam_name, img_array)
 
     def _write_video_frame(self, cam_name: str, img: np.ndarray):
+        """``cam_name`` is the dataset key, e.g. "observation.images.wrist"."""
         video_key = f"{self.episode_idx}_{cam_name}"
         if video_key not in self._video_containers:
             video_path = (
                 self.output_dir
                 / "videos"
-                / f"observation.images.{cam_name}_episode_{self.episode_idx:06d}.mp4"
+                / f"{cam_name}_episode_{self.episode_idx:06d}.mp4"
             )
             container = av.open(str(video_path), mode="w")
             stream = container.add_stream("h264", rate=self.fps)
@@ -158,15 +153,16 @@ class LeRobotWriter:
                 json.dump(ep, f, indent=2)
 
         features = {
-            "observation.state": {"dtype": "float32", "shape": [6]},
-            "action": {"dtype": "float32", "shape": [6]},
-            "language_instruction": {"dtype": "string", "shape": [1]},
+            C.DATASET_STATE_KEY: {"dtype": "float32", "shape": [C.NUM_JOINTS], "names": list(C.JOINT_NAMES)},
+            # absolute joint-position targets (soarm_common.contract.ACTION_TYPE)
+            C.DATASET_ACTION_KEY: {"dtype": "float32", "shape": [C.ACTION_DIM], "names": list(C.JOINT_NAMES)},
+            C.DATASET_TASK_KEY: {"dtype": "string", "shape": [1]},
         }
         if self.use_camera:
-            for cam_name in ("wrist", "third_person"):
-                features[f"observation.images.{cam_name}"] = {
+            for spec in C.CAMERAS:
+                features[spec.dataset_key] = {
                     "dtype": "video",
-                    "shape": [IMAGE_SIZE, IMAGE_SIZE, 3],
+                    "shape": [spec.height, spec.width, 3],
                     "video_info": {
                         "video.fps": float(self.fps),
                         "video.codec": "h264",
@@ -177,8 +173,10 @@ class LeRobotWriter:
 
         info = {
             "codebase_version": "v3.0",
-            "robot_type": "so_arm101",
+            "robot_type": C.ROBOT_TYPE,
             "fps": self.fps,
+            "action_type": C.ACTION_TYPE,
+            "soarm_contract_version": C.CONTRACT_VERSION,
             "total_episodes": len(self.episodes),
             "total_frames": self.global_frame_idx,
             "features": features,
@@ -187,16 +185,16 @@ class LeRobotWriter:
             json.dump(info, f, indent=2)
 
         if self.all_frames:
-            states = np.array([f["observation.state"] for f in self.all_frames], dtype=np.float32)
-            actions = np.array([f["action"] for f in self.all_frames], dtype=np.float32)
+            states = np.array([f[C.DATASET_STATE_KEY] for f in self.all_frames], dtype=np.float32)
+            actions = np.array([f[C.DATASET_ACTION_KEY] for f in self.all_frames], dtype=np.float32)
             stats = {
-                "observation.state": {
+                C.DATASET_STATE_KEY: {
                     "mean": states.mean(axis=0).tolist(),
                     "std": np.maximum(states.std(axis=0), 1e-6).tolist(),
                     "min": states.min(axis=0).tolist(),
                     "max": states.max(axis=0).tolist(),
                 },
-                "action": {
+                C.DATASET_ACTION_KEY: {
                     "mean": actions.mean(axis=0).tolist(),
                     "std": np.maximum(actions.std(axis=0), 1e-6).tolist(),
                     "min": actions.min(axis=0).tolist(),
@@ -219,10 +217,8 @@ def _setup_ik_controller(robot, device, command_type: str = "position"):
     """
     from isaaclab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 
-    arm_joint_ids, _ = robot.find_joints(
-        ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
-    )
-    ee_body_ids, _ = robot.find_bodies(["gripper_frame_link"])
+    arm_joint_ids, _ = robot.find_joints(list(C.ARM_JOINT_NAMES), preserve_order=True)
+    ee_body_ids, _ = robot.find_bodies([C.EE_BODY_NAME])
     ee_body_id = ee_body_ids[0]
 
     # For a fixed-base robot, the Jacobian omits the root body, so the
@@ -452,15 +448,17 @@ def collect_episodes(
     if env_type == "reach":
         from soarm_reach_env import SoarmReachEnv, SoarmReachEnvCfg
         cfg = SoarmReachEnvCfg()
-        cfg.use_camera = use_camera
-        cfg.use_third_person_camera = use_camera
+        cfg.use_wrist_camera = use_camera
+        cfg.use_overhead_camera = use_camera
+        cfg.num_rerenders_on_reset = 1 if use_camera else 0  # first frame shows the reset scene
         cfg.num_envs = 1
         env = SoarmReachEnv(cfg, render_mode=render_mode)
     elif env_type == "pick":
         from soarm_pick_env import SoarmPickEnv, SoarmPickEnvCfg
         cfg = SoarmPickEnvCfg()
-        cfg.use_camera = use_camera
-        cfg.use_third_person_camera = use_camera
+        cfg.use_wrist_camera = use_camera
+        cfg.use_overhead_camera = use_camera
+        cfg.num_rerenders_on_reset = 1 if use_camera else 0  # first frame shows the reset scene
         cfg.num_envs = 1
         env = SoarmPickEnv(cfg, render_mode=render_mode)
     else:
@@ -576,28 +574,28 @@ def collect_episodes(
                 full_joint_target[:, -1] = gripper_goal
 
             # Convert to delta-action that the environment expects
-            current_pos = robot.data.joint_pos.torch
+            current_pos = robot.data.joint_pos.torch.clone()
             delta = (full_joint_target - current_pos) / cfg.action_scale
             action = delta.clamp(-1.0, 1.0)
+
+            # A dataset frame is (observation before the step, action taken from it). The images
+            # come from the previous step's (or the reset's) observation, i.e. the same instant
+            # as the joint state.
+            images = {}
+            for spec in C.CAMERAS if use_camera else ():
+                if spec.obs_key in obs:
+                    img = obs[spec.obs_key][0].cpu().numpy()
+                    images[spec.dataset_key] = img[:, :, :3] if img.shape[-1] == 4 else img
 
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated.any() or truncated.any()
 
-            # Record absolute joint-position targets as the action
-            state_np = obs["policy"][0, :6].cpu().numpy()
-            action_np = full_joint_target[0].cpu().numpy()
-
-            images = {}
-            if use_camera and "wrist_rgb" in obs:
-                img = obs["wrist_rgb"][0].cpu().numpy()
-                images["wrist"] = img[:, :, :3] if img.shape[-1] == 4 else img
-            if use_camera and "third_person_rgb" in obs:
-                img = obs["third_person_rgb"][0].cpu().numpy()
-                images["third_person"] = img[:, :, :3] if img.shape[-1] == 4 else img
-
+            # Record the contract action: the absolute joint-position target the env applied this
+            # step (current position + clamped delta), not the raw IK goal, which the env only
+            # approaches at action_scale rad per step.
             writer.add_frame(
-                state=state_np,
-                action=action_np,
+                state=current_pos[0].cpu().numpy(),
+                action=env.joint_pos_target[0].cpu().numpy(),
                 language_instruction=lang,
                 images=images,
             )

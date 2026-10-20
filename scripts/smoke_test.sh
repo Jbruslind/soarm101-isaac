@@ -146,11 +146,12 @@ echo ""
 echo "7. Checking Python imports..."
 check "observation_builder imports" python3 -c "
 import sys; sys.path.insert(0, '$PROJECT_DIR/ros2_ws/src/soarm_vla_bridge')
-from soarm_vla_bridge.observation_builder import build_observation, SOARM_JOINT_NAMES
+from soarm_vla_bridge.observation_builder import build_observation, SOARM_JOINT_NAMES, IMAGE_SIZE
 import numpy as np
-obs = build_observation({'shoulder_pan': 0.1}, np.zeros((224,224,3), dtype=np.uint8))
+obs = build_observation({SOARM_JOINT_NAMES[0]: 0.1}, np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8))
 assert 'state' in obs and 'images' in obs
 "
+check "soarm_common contract imports without Isaac" python3 "$PROJECT_DIR/isaac_envs/soarm_common/contract.py"
 
 # Cleanup
 rm -rf "$TEST_DATA_DIR"

@@ -8,16 +8,12 @@ from __future__ import annotations
 
 import numpy as np
 
-SOARM_JOINT_NAMES = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
+from soarm_vla_bridge.soarm_contract import contract as C
 
-IMAGE_SIZE = 224
+# Joint order, image size and policy keys come from the shared contract
+# (isaac_envs/soarm_common/contract.py), the same module the sim and the dataset use.
+SOARM_JOINT_NAMES = list(C.JOINT_NAMES)
+IMAGE_SIZE = C.IMAGE_SIZE
 POLICY_MODE_SOARM = "soarm"
 POLICY_MODE_DROID = "droid"
 
@@ -66,9 +62,9 @@ def build_observation(
     )
 
     if wrist_resized is not None:
-        images["cam_wrist"] = wrist_resized
+        images[C.WRIST_CAMERA.policy_key] = wrist_resized  # "cam_wrist"
     if overhead_resized is not None:
-        images["cam_overhead"] = overhead_resized
+        images[C.OVERHEAD_CAMERA.policy_key] = overhead_resized  # "cam_overhead"
 
     # DROID fallback compatibility:
     # If the OpenPi server is running the DROID policy, it expects LeRobot-style
@@ -99,9 +95,9 @@ def build_observation(
 
     soarm_obs = {
         # SOARM / pi0-style inputs
-        "state": state,
-        "images": images,
-        "prompt": prompt,
+        C.POLICY_STATE_KEY: state,
+        C.POLICY_IMAGES_KEY: images,
+        C.POLICY_PROMPT_KEY: prompt,
     }
 
     droid_obs = {

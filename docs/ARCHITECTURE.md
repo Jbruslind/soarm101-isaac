@@ -241,7 +241,7 @@ graph LR
     PR --> OB
     OB -- "WebSocket" --> INF
     INF -- "action chunk" --> AQ
-    AQ -- "10 Hz timer" --> JC
+    AQ -- "30 Hz timer" --> JC
 ```
 
 ---

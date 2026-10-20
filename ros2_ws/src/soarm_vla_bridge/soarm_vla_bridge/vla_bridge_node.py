@@ -31,6 +31,7 @@ from sensor_msgs.msg import JointState, Image
 from std_msgs.msg import Bool, String
 from builtin_interfaces.msg import Duration
 
+from soarm_vla_bridge.soarm_contract import contract as C
 from soarm_vla_bridge.observation_builder import (
     build_observation,
     SOARM_JOINT_NAMES,
@@ -129,7 +130,9 @@ class VLABridgeNode(Node):
         # Parameters
         self.declare_parameter("openpi_host", os.environ.get("OPENPI_HOST", "localhost"))
         self.declare_parameter("openpi_port", int(os.environ.get("OPENPI_PORT", "8000")))
-        self.declare_parameter("control_rate", 10.0)
+        # One action per control step at the contract rate (30 Hz, the dataset fps); each action is
+        # an absolute joint-position target (C.ACTION_TYPE), published on /joint_commands.
+        self.declare_parameter("control_rate", C.CONTROL_HZ)
         self.declare_parameter("prompt", "move the robot arm to the target")
         self.declare_parameter("action_chunk_size", 1)
 
@@ -237,24 +240,24 @@ class VLABridgeNode(Node):
         camera_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
 
         self.joint_sub = self.create_subscription(
-            JointState, "/joint_states", self._joint_cb, joint_qos
+            JointState, C.JOINT_STATES_TOPIC, self._joint_cb, joint_qos
         )
         self.wrist_cam_sub = self.create_subscription(
-            Image, "/camera/wrist/image_raw", self._wrist_image_cb, camera_qos
+            Image, C.WRIST_CAMERA.ros_topic, self._wrist_image_cb, camera_qos
         )
         self.overhead_cam_sub = self.create_subscription(
-            Image, "/camera/overhead/image_raw", self._overhead_image_cb, camera_qos
+            Image, C.OVERHEAD_CAMERA.ros_topic, self._overhead_image_cb, camera_qos
         )
         self.prompt_sub = self.create_subscription(
-            String, "/vla/prompt", self._prompt_cb, 10
+            String, C.PROMPT_TOPIC, self._prompt_cb, 10
         )
         self.enabled_sub = self.create_subscription(
-            Bool, "/vla/enabled", self._enabled_cb, 10
+            Bool, C.ENABLED_TOPIC, self._enabled_cb, 10
         )
 
         # Publisher: Isaac Sim's ROS2SubscribeJointState expects `sensor_msgs/JointState`
         # commands (position/velocity/effort arrays), not `trajectory_msgs/JointTrajectory`.
-        self.action_pub = self.create_publisher(JointState, "/joint_commands", 10)
+        self.action_pub = self.create_publisher(JointState, C.JOINT_COMMANDS_TOPIC, 10)
 
         # Control timer
         period = 1.0 / rate
@@ -394,7 +397,7 @@ class VLABridgeNode(Node):
             if not self._warned_missing_wrist:
                 self._warned_missing_wrist = True
                 self.get_logger().warn(
-                    "[OpenVLA] Preflight: waiting for /camera/wrist/image_raw."
+                    f"[OpenVLA] Preflight: waiting for {C.WRIST_CAMERA.ros_topic}."
                 )
             return False
 
@@ -402,7 +405,7 @@ class VLABridgeNode(Node):
             if not self._warned_missing_overhead:
                 self._warned_missing_overhead = True
                 self.get_logger().warn(
-                    "[OpenVLA] Preflight: waiting for /camera/overhead/image_raw."
+                    f"[OpenVLA] Preflight: waiting for {C.OVERHEAD_CAMERA.ros_topic}."
                 )
             return False
 
@@ -458,7 +461,7 @@ class VLABridgeNode(Node):
                 t0 = time.perf_counter()
                 result = self.client.infer(obs)
                 elapsed = time.perf_counter() - t0
-                actions = result.get("actions", [])
+                actions = result.get(C.POLICY_ACTIONS_KEY, [])
                 try:
                     actions_len = len(actions)
                 except TypeError:

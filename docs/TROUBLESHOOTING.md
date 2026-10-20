@@ -149,7 +149,10 @@ objects from being ejected by collision resolution.
 
 1. Ensure the camera is attached to the correct link in the URDF/USD
 2. Check that lighting exists in the scene (`DomeLightCfg`)
-3. Verify `use_camera=True` is set in the environment config
+3. Verify `use_wrist_camera=True` / `use_overhead_camera=True` are set in the environment config
+4. Wrist frames going dark only when the gripper works close to the base: the old wrist mount sat
+   where the forearm folds down; the contract mount (`soarm_common/contract.py`) avoids it
+   (see docs/CONFIG_ALIGNMENT.md)
 
 ### PhysX tensor device mismatch in ROS2 joint publishing (`expected device 0, received device -1`)
 

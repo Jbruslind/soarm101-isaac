@@ -24,6 +24,10 @@ push_data() {
     rsync -avz --progress \
         "$PROJECT_DIR/training/configs/" \
         "$CLOUD_HOST:$REMOTE_DIR/training/configs/"
+    # The SO-ARM101 contract (joint names, camera keys) imported by soarm_config.py
+    rsync -avz --progress --exclude "__pycache__" \
+        "$PROJECT_DIR/isaac_envs/soarm_common/" \
+        "$CLOUD_HOST:$REMOTE_DIR/training/configs/soarm_common/"
 }
 
 pull_data() {

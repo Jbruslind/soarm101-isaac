@@ -12,7 +12,8 @@
 # Cameras are ON by default (required for VLA training).  Each episode
 # produces two MP4 files in data/episodes/videos/:
 #   - observation.images.wrist_episode_000000.mp4
-#   - observation.images.third_person_episode_000000.mp4
+#   - observation.images.overhead_episode_000000.mp4
+# (camera poses and keys: isaac_envs/soarm_common/contract.py, docs/CONFIG_ALIGNMENT.md)
 #
 # Use --watch to enable WebRTC streaming so you can see the robot move in
 # real time via the Isaac Sim WebRTC Streaming Client. Implies --wait so you
@@ -113,6 +114,6 @@ docker compose --profile collect run --rm \
 
 echo "=== Done. Episodes saved to data/episodes/ ==="
 if [[ -z "$NO_CAMERA" ]]; then
-    echo "Videos (wrist + third_person): data/episodes/videos/"
+    echo "Videos (wrist + overhead): data/episodes/videos/"
 fi
 echo "Next: ./scripts/train.sh"

@@ -209,6 +209,10 @@ EOF
         rsync $RSYNC_FLAGS \
             "$PROJECT_DIR/training/configs/" \
             "$REMOTE_HOST:$REMOTE_DIR/docker/training/configs/"
+        # The SO-ARM101 contract (joint names, camera keys) imported by soarm_config.py
+        rsync $RSYNC_FLAGS --exclude "__pycache__" \
+            "$PROJECT_DIR/isaac_envs/soarm_common/" \
+            "$REMOTE_HOST:$REMOTE_DIR/docker/training/configs/soarm_common/"
     fi
 
     echo "[4/5] Building container on Jetson (first build may take 20-40 min)..."
@@ -263,6 +267,10 @@ deploy_x86() {
         rsync $RSYNC_FLAGS \
             "$PROJECT_DIR/training/configs/" \
             "$REMOTE_HOST:$REMOTE_DIR/training/configs/"
+        # The SO-ARM101 contract (joint names, camera keys) imported by soarm_config.py
+        rsync $RSYNC_FLAGS --exclude "__pycache__" \
+            "$PROJECT_DIR/isaac_envs/soarm_common/" \
+            "$REMOTE_HOST:$REMOTE_DIR/training/configs/soarm_common/"
     fi
 
     echo "[3/4] Building containers on remote..."

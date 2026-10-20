@@ -15,7 +15,8 @@ received state and per-camera image statistics (a mean of ~0 means a blank frame
 
 Runs anywhere ``openpi-client`` is installed, e.g. in the ros2-bridge image (from the repo root):
 
-    docker run --rm --network host -v "$PWD/scripts:/scripts:ro" --entrypoint python3 \\
+    docker run --rm --network host -v "$PWD/scripts:/scripts:ro" \\
+        -v "$PWD/isaac_envs/soarm_common:/opt/soarm/soarm_common:ro" --entrypoint python3 \\
         soarm-ros2 /scripts/mock_policy_server.py --port 8000
     ./scripts/interactive_test.sh --remote 127.0.0.1 --port 8000
 
@@ -27,9 +28,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import http
+import importlib
 import logging
 import math
+import os
+import sys
 import time
+from pathlib import Path
 
 import numpy as np
 from openpi_client import msgpack_numpy
@@ -37,6 +42,24 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 log = logging.getLogger("mock_policy")
+
+
+def load_contract():
+    """Import the shared contract (isaac_envs/soarm_common/contract.py): from PYTHONPATH,
+    $SOARM_COMMON_DIR, /opt/soarm (docker mount) or the repo checkout this script is in."""
+    try:
+        return importlib.import_module("soarm_common.contract")
+    except ImportError:
+        pass
+    repo_envs = Path(os.path.realpath(__file__)).parents[1] / "isaac_envs"
+    for cand in (os.environ.get("SOARM_COMMON_DIR"), "/opt/soarm", str(repo_envs)):
+        if cand and (Path(cand) / "soarm_common" / "contract.py").is_file():
+            sys.path.insert(0, cand)
+            return importlib.import_module("soarm_common.contract")
+    raise ImportError("soarm_common.contract not found; mount isaac_envs/soarm_common at /opt/soarm/soarm_common")
+
+
+C = load_contract()
 
 
 def make_actions(t0: float, horizon: int, dim: int, dt: float, amp: float, period: float) -> np.ndarray:
@@ -48,15 +71,15 @@ def make_actions(t0: float, horizon: int, dim: int, dt: float, amp: float, perio
 
 def describe_obs(obs: dict) -> str:
     parts = []
-    state = obs.get("state", obs.get("observation/joint_position"))
+    state = obs.get(C.POLICY_STATE_KEY, obs.get("observation/joint_position"))
     if state is not None:
         parts.append("state=" + np.array2string(np.asarray(state), precision=3, suppress_small=True))
-    images = dict(obs.get("images", {}))
+    images = dict(obs.get(C.POLICY_IMAGES_KEY, {}))
     images.update({k: v for k, v in obs.items() if k.startswith("observation/") and "image" in k})
     for name, img in images.items():
         img = np.asarray(img)
         parts.append(f"{name}={img.shape}/{img.dtype} mean={img.mean():.1f} std={img.std():.1f}")
-    parts.append(f"prompt={obs.get('prompt')!r}")
+    parts.append(f"prompt={obs.get(C.POLICY_PROMPT_KEY)!r}")
     return " ".join(parts)
 
 
@@ -65,8 +88,9 @@ def main() -> None:
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--horizon", type=int, default=10, help="actions per chunk")
-    p.add_argument("--action-dim", type=int, default=6, help="6 for soarm mode, 8 for droid mode")
-    p.add_argument("--dt", type=float, default=0.1, help="time between actions (bridge control rate 10 Hz)")
+    p.add_argument("--action-dim", type=int, default=C.ACTION_DIM, help="6 for soarm mode, 8 for droid mode")
+    p.add_argument("--dt", type=float, default=C.CONTROL_DT,
+                   help="time between actions (contract control rate, 30 Hz)")
     p.add_argument("--amplitude", type=float, default=0.3, help="rad")
     p.add_argument("--period", type=float, default=8.0, help="s")
     p.add_argument("--latency", type=float, default=0.0, help="artificial inference delay, s")
@@ -94,7 +118,7 @@ def main() -> None:
                 log.info("request #%d %s -> actions %s first=%s", n_requests, describe_obs(obs), actions.shape,
                          np.array2string(actions[0], precision=3))
                 await ws.send(packer.pack({
-                    "actions": actions,
+                    C.POLICY_ACTIONS_KEY: actions,
                     "server_timing": {"infer_ms": 1000.0 * (time.monotonic() - t_infer)},
                 }))
         except ConnectionClosed:

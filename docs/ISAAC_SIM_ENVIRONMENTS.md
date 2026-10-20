@@ -198,15 +198,20 @@ sim-to-real fidelity matters:
 
 ## Camera Configuration
 
-When `use_camera=True`, a pinhole camera is attached to the gripper frame:
+Both cameras come from the shared contract `isaac_envs/soarm_common/contract.py`
+(`WRIST_CAMERA`, `OVERHEAD_CAMERA`), the same definitions `interactive_inference.py` uses.
+Enable them with `use_wrist_camera=True` / `use_overhead_camera=True`; the images appear in
+the observation dict as `wrist_rgb` / `overhead_rgb`.
 
 | Parameter | Value |
 |---|---|
-| Resolution | 224 x 224 |
-| Frame rate | 30 Hz |
-| FOV | ~60 deg (focal_length=1.93mm, aperture=2.65mm) |
-| Offset from gripper | (5cm, 0, 2cm) forward and up |
-| Format | RGB uint8 |
+| Resolution | 224 x 224, RGB uint8 |
+| Sampling | 30 Hz (one image per control step) |
+| Intrinsics | focal_length 1.93 mm, horizontal aperture 2.65 mm (69 deg horizontal FOV), near clip 1 cm |
+| Wrist mount | under `gripper_frame_link` at (0.02, 0.04, -0.07) m: beside the gripper, 7 cm back from the tips, aimed between the jaws |
+| Overhead | world (0.45, 0.40, 0.30) m looking at (0.19, 0, 0.03) |
+
+See docs/CONFIG_ALIGNMENT.md for the full camera / key / control-rate contract.
 
 ---
 
