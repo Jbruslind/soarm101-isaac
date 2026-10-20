@@ -210,8 +210,10 @@ class LeRobotWriter:
               f"to {self.output_dir}")
 
 
-def _setup_ik_controller(robot, device):
+def _setup_ik_controller(robot, device, command_type: str = "position"):
     """Create a DifferentialIKController targeting the SO-ARM101 end-effector.
+
+    ``command_type`` is "position" (reach) or "pose" (pick, which needs a top-down gripper).
 
     Returns (ik_controller, arm_joint_ids, ee_body_id, ee_jacobi_idx).
     """
@@ -228,13 +230,91 @@ def _setup_ik_controller(robot, device):
     ee_jacobi_idx = ee_body_id - 1
 
     diff_ik_cfg = DifferentialIKControllerCfg(
-        command_type="position",
+        command_type=command_type,
         use_relative_mode=False,
         ik_method="dls",
     )
     ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=1, device=device)
 
     return ik_controller, arm_joint_ids, ee_body_id, ee_jacobi_idx
+
+
+class ScriptedPick:
+    """Waypoint state machine for the pick task, driven by differential IK in pose mode.
+
+    Phases: hover above the cube with the gripper open, descend, close, lift, carry over
+    the place target, lower, open.  ``step`` returns the EE goal pose (world frame) and the
+    gripper joint goal for the current phase.  The gripper is held top-down (gripper_frame_link
+    +z pointing down) with its x axis pointing back at the robot, so the jaws open radially;
+    position-only IK lets the wrist pitch drift and the jaws then land on top of the cube.
+
+    Experimental: the jaws straddle and close on the cube and lift it a few cm, but it slips
+    out during the lift, so place success is still ~0 (see GitHub issue #22). Pick episodes
+    from this policy are attempts, not usable demonstrations yet.
+    """
+
+    HOVER_Z = 0.08      # m above the table while moving
+    GRASP_Z = 0.010     # gripper_frame_link (jaw tip) height when grasping; lower and the
+                        # tips drag on the table, which stalls the IK short of the cube
+    PLACE_Z = 0.012
+    GRASP_OFFSET = 0.025  # m along the gripper x axis, to centre the cube between the jaws
+    MAX_SPEED = 0.01    # m per step the commanded EE goal may move
+    OPEN, CLOSED = 1.0, 0.0  # gripper joint goals (rad)
+    # (name, gripper goal, steps to hold after the EE is within tol, max steps in phase)
+    PHASES = [
+        ("hover", OPEN, 3, 90), ("descend", OPEN, 5, 45), ("close", CLOSED, 30, 30),
+        ("lift", CLOSED, 0, 40), ("carry", CLOSED, 0, 60), ("lower", CLOSED, 5, 40),
+        ("release", OPEN, 15, 15),
+    ]
+
+    def __init__(self, cube_w: torch.Tensor, place_w: torch.Tensor, tol: float = 0.01):
+        self.cube_w, self.place_w, self.tol = cube_w.clone(), place_w.clone(), tol
+        self.phase, self.t, self.settled = 0, 0, 0
+        self.cmd = self.grasp_pos = None
+
+    @staticmethod
+    def top_down_quat(pos_w: torch.Tensor) -> torch.Tensor:
+        """(x, y, z, w) orientation with z down and x pointing from ``pos_w`` towards the base."""
+        from isaaclab.utils.math import quat_from_matrix
+
+        yaw = torch.atan2(pos_w[:, 1], pos_w[:, 0])
+        c, s, zero = torch.cos(yaw), torch.sin(yaw), torch.zeros_like(yaw)
+        x_axis = torch.stack([-c, -s, zero], -1)
+        y_axis = torch.stack([-s, c, zero], -1)
+        z_axis = torch.stack([zero, zero, -torch.ones_like(yaw)], -1)
+        return quat_from_matrix(torch.stack([x_axis, y_axis, z_axis], -1))
+
+    def _goal(self, ee_pos_w: torch.Tensor) -> torch.Tensor:
+        name = self.PHASES[self.phase][0]
+        if name in ("close", "lift"):
+            # Hold the EE where the descent ended while closing (pushing on towards an
+            # unreachable goal shoves the cube away), then lift straight up from there.
+            if self.grasp_pos is None:
+                self.grasp_pos = self.cmd = ee_pos_w.clone()
+            goal = self.grasp_pos.clone()
+            if name == "lift":
+                goal[:, 2] = self.HOVER_Z
+            return goal
+        goal = (self.cube_w if name in ("hover", "descend") else self.place_w).clone()
+        radial = goal[:, :2] / goal[:, :2].norm(dim=-1, keepdim=True)
+        goal[:, :2] -= self.GRASP_OFFSET * radial  # +x of the top-down gripper is -radial
+        goal[:, 2] = {"descend": self.GRASP_Z, "lower": self.PLACE_Z,
+                      "release": self.PLACE_Z}.get(name, self.HOVER_Z)
+        return goal
+
+    def step(self, ee_pos_w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, float]:
+        _, gripper, hold, max_steps = self.PHASES[self.phase]
+        self.cmd = ee_pos_w.clone() if self.cmd is None else self.cmd
+        goal = self._goal(ee_pos_w)
+        if torch.norm(ee_pos_w - goal, dim=-1).item() < self.tol:
+            self.settled += 1
+        self.t += 1
+        if (self.settled > hold or self.t >= max_steps) and self.phase < len(self.PHASES) - 1:
+            self.phase, self.t, self.settled = self.phase + 1, 0, 0
+        # Move the commanded goal at a bounded speed so the arm doesn't fling the cube.
+        delta = goal - self.cmd
+        self.cmd = self.cmd + delta * (self.MAX_SPEED / delta.norm(dim=-1, keepdim=True).clamp(min=self.MAX_SPEED))
+        return self.cmd, self.top_down_quat(self.cmd), gripper
 
 
 def collect_episodes(
@@ -290,7 +370,7 @@ def collect_episodes(
 
     robot = env.robot
     ik_controller, arm_joint_ids, ee_body_id, ee_jacobi_idx = _setup_ik_controller(
-        robot, env.device
+        robot, env.device, command_type="pose" if env_type == "pick" else "position"
     )
 
     lang = LANGUAGE_INSTRUCTIONS.get(env_type, "move the robot arm")
@@ -319,9 +399,13 @@ def collect_episodes(
     print("Collecting episodes with IK-based scripted policy...", flush=True)
     writer = LeRobotWriter(output_dir, use_camera=use_camera)
 
+    successes = 0
     for ep in range(num_episodes):
         obs, info = env.reset()
         target_w = env.target_pos.clone()
+        pick = ScriptedPick(env.cube_pos_w, target_w) if env_type == "pick" else None
+        gripper_goal = None
+        target_quat_w = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=env.device)  # (x, y, z, w)
 
         ik_controller.reset()
 
@@ -344,6 +428,8 @@ def collect_episodes(
             root_quat_w = root_pose_w[:, 3:7]
 
             arm_joint_pos = robot.data.joint_pos.torch[:, arm_joint_ids]
+            if pick is not None:
+                target_w, target_quat_w, gripper_goal = pick.step(ee_pos_w)
             # Measured before stepping: on the final step the env auto-resets the robot.
             ee_dist = torch.norm(ee_pos_w - target_w, dim=-1).item()
 
@@ -354,22 +440,26 @@ def collect_episodes(
             )
 
             # Transform target from world frame to base frame
-            identity_quat = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=env.device)  # (x, y, z, w)
-            target_b, _ = subtract_frame_transforms(
+            target_b, target_quat_b = subtract_frame_transforms(
                 root_pos_w, root_quat_w,
-                target_w, identity_quat,
+                target_w, target_quat_w,
             )
 
             # Compute IK: desired arm joint positions to reach the target
-            # set_command requires ee_quat even for position-only mode
-            ik_controller.set_command(target_b, ee_quat=ee_quat_b)
+            if pick is not None:
+                ik_controller.set_command(torch.cat([target_b, target_quat_b], dim=-1))
+            else:
+                # set_command requires ee_quat even for position-only mode
+                ik_controller.set_command(target_b, ee_quat=ee_quat_b)
             arm_joint_target = ik_controller.compute(
                 ee_pos_b, ee_quat_b, jacobian, arm_joint_pos
             )
 
-            # Build full 6-DOF joint target (arm + gripper held at 0)
+            # Build full 6-DOF joint target (gripper held for reach, scripted for pick)
             full_joint_target = robot.data.joint_pos.torch.clone()
             full_joint_target[:, arm_joint_ids] = arm_joint_target
+            if gripper_goal is not None:
+                full_joint_target[:, -1] = gripper_goal
 
             # Convert to delta-action that the environment expects
             current_pos = robot.data.joint_pos.torch
@@ -401,11 +491,18 @@ def collect_episodes(
 
         writer.end_episode()
 
-        # Success terminates the episode inside env.step, so a short episode means reached.
-        reached = bool(terminated.any()) or ee_dist < cfg.success_threshold
-        status = "REACHED" if reached else f"dist={ee_dist:.3f}m"
+        # Success terminates the episode inside env.step (pick: cube within place_threshold
+        # of the target), so a terminated episode means success.
+        if pick is not None:
+            reached = bool(terminated.any())
+            status = "PLACED" if reached else f"failed in phase {pick.PHASES[pick.phase][0]}"
+        else:
+            reached = bool(terminated.any()) or ee_dist < cfg.success_threshold
+            status = "REACHED" if reached else f"dist={ee_dist:.3f}m"
+        successes += int(reached)
         print(f"Episode {ep + 1}/{num_episodes}: {step} steps  ({status})", flush=True)
 
+    print(f"Success rate: {successes}/{num_episodes}", flush=True)
     writer.save()
     env.close()
     sim_app.close()
