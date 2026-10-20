@@ -57,3 +57,6 @@ core.*
 .bash_history
 *.sh.env
 robot_description/urdf/soarm101_isaacsim/
+
+# Tutorial outputs and exercise copies (docs/tutorials/)
+data/tutorials/
