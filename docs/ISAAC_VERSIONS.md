@@ -141,6 +141,21 @@ pre-step distance. With both fixes the IK collector reaches every target (5/5 ep
 It sat at (0.8, 0.8, 0.5) with an identity rotation, which in the `world` convention looks
 along +X, at an empty horizon. It now looks at the workspace point (0, 0, 0.2).
 
+### Interactive inference (Isaac Lab 3.0): no camera topics and no motion when headless
+
+Isaac Lab 3.0 only pumps Kit (`app.update()`) from a Kit visualizer or when an Isaac Lab
+camera reads its data. `interactive_inference.py` drives everything through the OmniGraph
+ROS 2 graph, which only runs inside `app.update()`, so without a visualizer
+(`LIVESTREAM=0`, headless) the camera topics were never published and `/joint_commands` was
+never applied. The main loop now calls `ensure_isaac_rtx_render_update(force=True)` on
+render steps (a no-op when a Kit visualizer already pumps Kit).
+
+The wrist camera also looked up at the sky (58 degrees above the tool axis) instead of
+32 degrees down toward the jaws; its offset rotation is now `(0, -0.48481, 0, 0.87462)`
+(x, y, z, w). `docker-compose.yml` no longer points `FASTRTPS_DEFAULT_PROFILES_FILE` at a
+profile that the 6.2 image does not ship; Isaac Sim uses `FASTDDS_BUILTIN_TRANSPORTS=UDPv4`
+like the bridge containers.
+
 ### The IsaacLab window showed "World" as the viewer follow mode
 
 With `KitVisualizerCfg(origin_type="asset", origin_track_path="robot")` as the env's
