@@ -53,6 +53,10 @@ Official guide: `docs/source/isaaclab/migrating.rst` in the Isaac Lab repo.
   a quaternion to Isaac Lab. Check new code with Isaac Lab's
   `scripts/tools/find_quaternions.py --path isaac_envs`, and at runtime with
   `WARN_ON_TORCH_QUATF_ACCESS=1`.
+- **Prim-path regexes match across `/`**: `/World/envs/env_.*/Cube` also matches every prim
+  under `env_0`, so a spawner clones the asset under each of them (startup failure, or views
+  with 20+ entries per env). Use `env_[^/]+` (what `{ENV_REGEX_NS}` expands to) when the
+  leaf name is not unique.
 - **Asset and sensor data are `ProxyArray`**: use `.torch` (`robot.data.joint_pos.torch`,
   `camera.data.output["rgb"].torch`).
 - **Writes are explicit**: `write_joint_state_to_sim_index(position=..., velocity=...)`,
