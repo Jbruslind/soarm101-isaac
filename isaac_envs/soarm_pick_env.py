@@ -32,8 +32,11 @@ class SoarmPickEnvCfg(SoarmReachEnvCfg):
     observation_space: int = NUM_JOINTS * 2 + 3 + 3 + 3  # + cube pos + target pos
 
     # Cube
+    # Isaac Lab 3.0 matches prim-path regexes against the whole path, so ".*" would also match
+    # every prim below env_0 and the spawner would copy the cube under each of them.
+    # "[^/]+" keeps the wildcard to one path segment (what {ENV_REGEX_NS} expands to).
     cube_cfg: RigidObjectCfg = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/Cube",
+        prim_path="/World/envs/env_[^/]+/Cube",
         spawn=sim_utils.CuboidCfg(
             size=(0.03, 0.03, 0.03),
             rigid_props=PhysxRigidBodyPropertiesCfg(
@@ -78,17 +81,12 @@ class SoarmPickEnv(SoarmReachEnv):
         self.scene.rigid_objects["cube"] = self._cube
 
     def _get_observations(self) -> dict:
+        # Reuse the reach observations (camera images included) and insert the cube position.
+        obs_dict = super()._get_observations()
         joint_pos = self._robot.data.joint_pos.torch
         joint_vel = self._robot.data.joint_vel.torch
         cube_pos = self._cube.data.root_pos_w.torch
-        target_pos = self._target_pos
-
-        obs = torch.cat([joint_pos, joint_vel, cube_pos, target_pos], dim=-1)
-        obs_dict = {"policy": obs}
-
-        if self._camera is not None:
-            obs_dict["wrist_rgb"] = self._camera.data.output["rgb"].torch
-
+        obs_dict["policy"] = torch.cat([joint_pos, joint_vel, cube_pos, self._target_pos], dim=-1)
         return obs_dict
 
     def _get_rewards(self) -> torch.Tensor:
