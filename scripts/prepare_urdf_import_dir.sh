@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Create the directory that Isaac Sim's URDF importer writes to by default.
+# Create the directory that Isaac Sim's URDF importer writes to by default (GUI import).
 # The importer derives the output path from the URDF path and writes to
-#   <urdf_dir>/<urdf_basename>/<urdf_basename>.usd
-# e.g. robot_description/urdf/soarm101_isaacsim/soarm101_isaacsim.usd
+#   <urdf_dir>/<urdf_basename>/<urdf_basename>.usda (+ payloads/)
+# e.g. robot_description/urdf/soarm101_isaacsim/soarm101_isaacsim.usda
 # Run this before importing soarm101_isaacsim.urdf in the Isaac Sim GUI.
 set -euo pipefail
 
