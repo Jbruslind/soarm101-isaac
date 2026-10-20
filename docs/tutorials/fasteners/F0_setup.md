@@ -289,7 +289,10 @@ slab under a dome light, the viewport camera following the robot from the front-
 (eye `(0.8, 0.8, 0.5)`), and a small sphere marking the reach target in front of it. First the base swings to
 one side (the motion check), then the arm twitches under random actions.
 
-<!-- Screenshot to add from the first GUI run: ../images/F0_reach_moonlight.png -->
+![F0 in GUI mode: the SO-ARM101 reach env in Isaac Sim, seen through Moonlight](../images/F0_reach_moonlight.jpg)
+
+In GUI mode the PASS line ends with `mode=gui`, for example
+`[F0] PASS isaac_sim=6.2.0 isaac_lab=3.0.0 gpu=NVIDIA_RTX_A2000_12GB pan_travel=0.487rad steps_per_s=7.5 mode=gui`.
 
 **Checkpoint.** You are done with F0 when:
 
@@ -318,7 +321,8 @@ one side (the motion check), then the arm twitches under random actions.
    <details><summary>Answer</summary>
 
    Headless is faster. With a window, Kit also renders the viewport and Sunshine encodes it
-   for Moonlight. Expect a clear drop in GUI mode. The exact ratio depends on GPU and
+   for Moonlight. Expect a clear drop in GUI mode: on the reference RTX A2000 12 GB at 1920×1080, headless ran
+   83.4 steps/s and GUI 7.5 steps/s, about 11× slower. The exact ratio depends on GPU and
    resolution. Keep these two numbers: F8 builds a full VRAM/FPS table from them. Use GUI to
    look and headless to produce data.
 
