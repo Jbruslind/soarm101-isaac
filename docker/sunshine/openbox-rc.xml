@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal Openbox config for the streamed display: top-level app windows
+     (Isaac Sim, Kit apps) open maximized without decorations so they fill the
+     Moonlight stream. Sections not listed fall back to Openbox defaults. -->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <desktops>
+    <number>1</number>
+  </desktops>
+  <applications>
+    <application class="*" type="normal">
+      <decor>no</decor>
+      <maximized>true</maximized>
+      <focus>yes</focus>
+    </application>
+  </applications>
+</openbox_config>

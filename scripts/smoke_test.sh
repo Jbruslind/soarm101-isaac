@@ -44,7 +44,8 @@ echo "1. Checking project structure..."
 check "README.md exists" test -f "$PROJECT_DIR/README.md"
 check "docker-compose.yml exists" test -f "$PROJECT_DIR/docker/docker-compose.yml"
 check "docker-compose.cloud.yml exists" test -f "$PROJECT_DIR/docker/docker-compose.cloud.yml"
-check ".env exists" test -f "$PROJECT_DIR/docker/.env"
+check ".env.example exists" test -f "$PROJECT_DIR/docker/.env.example"
+check ".env exists (cp docker/.env.example docker/.env)" test -f "$PROJECT_DIR/docker/.env"
 check ".env.cloud exists" test -f "$PROJECT_DIR/docker/.env.cloud"
 check "Isaac Sim Dockerfile" test -f "$PROJECT_DIR/docker/isaac-sim/Dockerfile"
 check "OpenPi Dockerfile" test -f "$PROJECT_DIR/docker/openpi-server/Dockerfile"
@@ -67,7 +68,8 @@ check "Train LoRA script" test -f "$PROJECT_DIR/training/scripts/train_lora.py"
 echo ""
 echo "2. Checking script permissions..."
 for script in setup_robot_usd.sh collect_sim_data.sh train.sh eval_sim.sh \
-              deploy_real.sh deploy_cloud.sh sync_data.sh smoke_test.sh; do
+              deploy_real.sh deploy_cloud.sh sync_data.sh smoke_test.sh \
+              sunshine.sh isaac.sh; do
     check "$script is executable" test -x "$PROJECT_DIR/scripts/$script"
 done
 

@@ -34,3 +34,23 @@ ros2_ws/install/
 ros2_ws/log/
 
 *.usd
+
+# Local config and secrets (copy docker/.env.example -> docker/.env)
+docker/.env
+.env
+*.env.local
+!docker/.env.example
+.cursor/*
+!.cursor/.gitkeep
+*.pem
+*.key
+*.crt
+credentials*.json
+sunshine_state.json
+.netrc
+
+# Crash dumps / shell / colcon env dumps
+*.dmp
+core.*
+.bash_history
+*.sh.env

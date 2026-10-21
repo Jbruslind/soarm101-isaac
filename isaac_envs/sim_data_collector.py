@@ -247,13 +247,15 @@ def collect_episodes(
     """Run data collection loop with an IK-based scripted policy."""
 
     livestream = os.environ.get("LIVESTREAM") in ("1", "2")
+    # --gui (scripts/_gui.sh) sets HEADLESS=0 and DISPLAY to the Sunshine X display.
+    gui = os.environ.get("HEADLESS") == "0" and bool(os.environ.get("DISPLAY"))
 
     # AppLauncher is always used: cameras need the rendering pipeline, and
     # livestream needs the WebRTC extension.  Both require AppLauncher.
     from isaaclab.app import AppLauncher
     app_launcher = AppLauncher(
-        headless=True,
-        enable_cameras=use_camera or livestream,
+        headless=not gui,
+        enable_cameras=use_camera or livestream or gui,
     )
     sim_app = app_launcher.app
 
@@ -261,7 +263,7 @@ def collect_episodes(
         import carb
         carb.settings.get_settings().set_bool("/app/livestream/allowResize", True)
 
-    render_mode = "human" if livestream else None
+    render_mode = "human" if (livestream or gui) else None
 
     print("SimulationApp started. Loading environment (this can take 1-2 min on first run)...", flush=True)
     if env_type == "reach":
