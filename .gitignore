@@ -60,3 +60,6 @@ robot_description/urdf/soarm101_isaacsim/
 
 # Fastener drop-test output (isaac_envs/assets/fastener_drop_test.py)
 data/fastener_drop/
+
+# Tutorial outputs and exercise copies (docs/tutorials/)
+data/tutorials/
