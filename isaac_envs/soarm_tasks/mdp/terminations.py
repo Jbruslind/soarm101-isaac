@@ -28,7 +28,12 @@ def fastener_placed(
     open_above: float = 0.5,
 ) -> torch.Tensor:
     """Success: the fastener is in the bin, at rest (< ``max_speed`` m/s), and released (gripper
-    angle above ``open_above`` rad)."""
+    angle above ``open_above`` rad).
+
+    ``record_demos.py`` and ``replay_demos.py`` call this term outside the termination manager,
+    which would otherwise resolve ``robot_cfg`` (the gripper joint id); so resolve it here."""
+    if isinstance(robot_cfg.joint_ids, slice):
+        robot_cfg.resolve(env.scene)
     obj = env.scene[object_cfg.name]
     speed = torch.linalg.vector_norm(obj.data.root_link_vel_w.torch[:, :3], dim=-1)
     q = env.scene[robot_cfg.name].data.joint_pos.torch[:, robot_cfg.joint_ids[0]]

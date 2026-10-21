@@ -66,3 +66,6 @@ data/fastener_drop/
 
 # Tutorial outputs and exercise copies (docs/tutorials/)
 data/tutorials/
+
+# Demo HDF5 files (isaac_envs/soarm_tasks/scripts/generate_demos.py, record_demos.py)
+data/demos/
