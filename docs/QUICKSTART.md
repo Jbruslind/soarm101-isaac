@@ -60,8 +60,12 @@ repository, and attempts a URDF-to-USD conversion for Isaac Sim.
 ./scripts/setup_robot_usd.sh
 ```
 
-If the automated USD conversion fails (common on first run), you can
-convert manually later inside the Isaac Sim GUI (see below).
+The converted robot is committed at `robot_description/usd/soarm101/soarm101.usda`
+(root layer) plus `payloads/` next to it, so the conversion step is skipped when that
+file exists. Run `FORCE=1 ./scripts/setup_robot_usd.sh` to regenerate it, or
+`USD_OUT_DIR=/some/dir ./scripts/setup_robot_usd.sh` to convert elsewhere for comparison.
+The conversion uses URDF importer 3.0 through `docker/isaac-sim/convert_urdf.py`; see
+that file's docstring for the prim layout.
 
 #### Opening the URDF from the Isaac Sim Docker image
 
@@ -108,10 +112,12 @@ Isaac Sim in Docker is intended to run headless; you interact with it via the We
    `/robot_description/urdf/soarm101_isaacsim.urdf`  
    (Use the path inside the container; the client shows the same scene as the container.)
 
-6. In the import dialog: **Static Base = ON**, **Allow Self-Collision = ON**, then import. The importer writes to `/robot_description/urdf/soarm101_isaacsim/soarm101_isaacsim.usd` (this path cannot be changed in the GUI). On the host, copy it to the path the project expects:
+6. In the import dialog: **Static Base = ON**, **Allow Self-Collision = ON**, then import. On the host, copy the importer's root `.usda` and its `payloads/` folder to the path the project expects:
    ```bash
-   ./scripts/copy_urdf_import_to_usd.sh
+   ./scripts/copy_urdf_import_to_usd.sh path/to/imported/soarm101_isaacsim.usda
    ```
+   A GUI import does not get `convert_urdf.py`'s articulation-root fix (the envs then see a
+   floating base held by a world joint), so prefer Option B.
 
 **Option B – Headless only (no GUI)**
 
@@ -128,11 +134,12 @@ To convert URDF → USD without opening the GUI, use the project script (from th
   ```bash
   cd docker && docker compose build isaac-sim && cd ..
   docker run --rm --runtime=nvidia -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y \
-    -v "$(pwd)/robot_description:/robot_description" \
-    soarm-isaac-sim \
+    -v "$(pwd)/robot_description:/robot_description:ro" \
+    -v "$(pwd)/robot_description/usd/soarm101:/usd_out" \
+    soarm-isaac-sim:6.2.0.1 \
     /isaac-sim/python.sh /usr/local/bin/convert_urdf.py \
       --urdf /robot_description/urdf/soarm101_isaacsim.urdf \
-      --out  /robot_description/usd/soarm101.usd
+      --out  /usd_out/soarm101.usda
   ```
 
   The stock `nvcr.io/nvidia/isaac-sim:6.2.0.1` image does not include `convert_urdf.py`; running `./scripts/setup_robot_usd.sh` from the host uses the same image and performs the conversion for you.
@@ -142,8 +149,8 @@ To convert URDF → USD without opening the GUI, use the project script (from th
 1. Run `./scripts/prepare_urdf_import_dir.sh` on the host so the importer can write.
 2. Open Isaac Sim (via streaming client or local display). Use a **read-write** mount for `robot_description`.
 3. File > Import > select `/robot_description/urdf/soarm101_isaacsim.urdf`.
-4. Settings: Static Base = ON, Allow Self-Collision = ON, then import. The importer writes to `robot_description/urdf/soarm101_isaacsim/soarm101_isaacsim.usd`.
-5. On the host: `./scripts/copy_urdf_import_to_usd.sh` to copy that file to `robot_description/usd/soarm101.usd`.
+4. Settings: Static Base = ON, Allow Self-Collision = ON, then import.
+5. On the host: `./scripts/copy_urdf_import_to_usd.sh <imported root .usda>` copies it and its `payloads/` to `robot_description/usd/soarm101/` (see the caveat in Option A, step 6).
 
 ---
 
@@ -155,7 +162,7 @@ target positions using a differential IK controller.  Camera images (wrist
 and third-person) are captured by default, and each frame includes a language
 instruction for VLA conditioning.  Data is saved in LeRobot v3.0 format.
 
-Ensure **Step 1** is done so `robot_description/usd/soarm101.usd` exists; otherwise the collector will fail when loading the env.
+Ensure **Step 1** is done so `robot_description/usd/soarm101/soarm101.usda` exists; otherwise the collector will fail when loading the env.
 
 ```bash
 # 50 reach-target episodes with cameras (5-10 minutes on a 3080 Ti)

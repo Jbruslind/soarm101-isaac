@@ -88,7 +88,7 @@ If automated conversion fails, convert manually in the Isaac Sim GUI.
 
 ### "Could not create directory ... for asset" when importing URDF
 
-The URDF importer always writes to a path derived from the URDF: for `soarm101_isaacsim.urdf` it creates `robot_description/urdf/soarm101_isaacsim/` and writes `soarm101_isaacsim.usd` there. You cannot change this destination in the GUI.
+The URDF importer writes to a path derived from the URDF: for `soarm101_isaacsim.urdf` it creates `robot_description/urdf/soarm101_isaacsim/`. Prefer the headless `./scripts/setup_robot_usd.sh`, which writes straight to `robot_description/usd/soarm101/`.
 
 Do this:
 
@@ -101,13 +101,13 @@ Do this:
    -v "$(pwd)/robot_description:/robot_description"
    ```
 
-2. **Import the URDF** in Isaac Sim (File > Import > soarm101_isaacsim.urdf). The file will be written to `robot_description/urdf/soarm101_isaacsim/soarm101_isaacsim.usd`.
+2. **Import the URDF** in Isaac Sim (File > Import > soarm101_isaacsim.urdf).
 
 3. **Copy to the path the project expects:**
    ```bash
-   ./scripts/copy_urdf_import_to_usd.sh
+   ./scripts/copy_urdf_import_to_usd.sh path/to/imported/soarm101_isaacsim.usda
    ```
-   This copies the file to `robot_description/usd/soarm101.usd`.
+   This copies the root layer and its `payloads/` to `robot_description/usd/soarm101/`.
 
    If you still see **"Insufficient permissions to write to destination directory"**, either:
 
@@ -124,7 +124,7 @@ After "app ready" and RTX/scenedb messages, the script loads the SO-ARM101 envir
 
 If nothing after "app ready" appears for several minutes:
 
-1. **Ensure the USD exists**: the collector needs `robot_description/usd/soarm101.usd`. Run `./scripts/setup_robot_usd.sh` (or the manual URDF import + `copy_urdf_import_to_usd.sh`) first.
+1. **Ensure the USD exists**: the collector needs `robot_description/usd/soarm101/soarm101.usda` (committed; regenerate with `FORCE=1 ./scripts/setup_robot_usd.sh`). Run `./scripts/setup_robot_usd.sh` (or the manual URDF import + `copy_urdf_import_to_usd.sh`) first.
 2. **Unbuffered output**: the script sets `PYTHONUNBUFFERED=1` so episode lines appear as they run. If you run the Python script by hand inside the container, use `PYTHONUNBUFFERED=1` as well.
 
 ### "chmod: Operation not permitted" on .sh files in the container
@@ -204,7 +204,7 @@ To see what each camera sees so you can adjust their position/orientation:
 2. In the **viewport** (the 3D view), find the **video/camera icon** at the **top of the viewport** (toolbar).
 3. Click it and choose a camera from the menu:
    - **overhead_cam** — under `World > Cameras > overhead_cam`
-   - **wrist_cam** — under `World > Robot > so101_new_calib > gripper_frame_link > wrist_cam`
+   - **wrist_cam** — under `World > Robot > Geometry > base_link > ... > gripper_link > gripper_frame_link > wrist_cam`
 4. The viewport will then show that camera’s view. Move the robot or scene and adjust the camera’s **Transform** (Translate/Orient) in the **Property** panel (select the camera prim in the Stage) to refine placement.
 5. To view another camera, click the video icon again and pick a different one. You can also open **Window > Viewport > Viewport 2** to have a second viewport and assign a different camera to each.
 

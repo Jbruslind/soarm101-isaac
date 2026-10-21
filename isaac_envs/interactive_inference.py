@@ -81,8 +81,13 @@ SOARM_JOINT_NAMES = [
 ]
 NUM_JOINTS = 6
 EE_BODY_NAME = "gripper_frame_link"
-ROBOT_USD_PATH = "/robot_description/usd/soarm101.usd"
-ROBOT_PRIM_PATH = "/World/Robot/so101_new_calib"
+# URDF importer 3.0 asset (see soarm_reach_env.py): the spawned prim is the robot itself,
+# links are nested under Geometry/ along the kinematic chain.
+ROBOT_USD_PATH = "/robot_description/usd/soarm101/soarm101.usda"
+ROBOT_PRIM_PATH = "/World/Robot"
+EE_LINK_REL_PATH = (
+    "Geometry/base_link/shoulder_link/upper_arm_link/lower_arm_link/wrist_link/gripper_link/gripper_frame_link"
+)
 # PhysX/ROS2 nodes often need the *actual* articulation-root prim (can be a descendant of ROBOT_PRIM_PATH).
 ROBOT_ARTICULATION_PRIM_PATH = ROBOT_PRIM_PATH
 # Camera/link attachments should stay on the robot model hierarchy (not articulation-root fallback).
@@ -271,10 +276,7 @@ def _wxyz_to_xyzw(q: tuple[float, float, float, float]) -> tuple[float, float, f
 def _setup_scene(sim: SimulationContext):
     """Spawn robot, cameras, ground, and lighting onto the USD stage.
 
-    The robot USD (from URDF import) can contain two articulation roots
-    (so101_new_calib and so101_new_calib_01). We remove the duplicate so
-    only one SO-ARM101 is visible. The wrist camera is parented to
-    gripper_frame_link and moves with the end-effector.
+    The wrist camera is parented to gripper_frame_link and moves with the end-effector.
     """
     global ROBOT_ARTICULATION_PRIM_PATH, ROBOT_MODEL_PRIM_PATH
     stage = omni.usd.get_context().get_stage()
@@ -314,39 +316,16 @@ def _setup_scene(sim: SimulationContext):
             ),
         },
     )
-    robot_cfg.spawn.func("/World/Robot", robot_cfg.spawn)
+    robot_cfg.spawn.func(ROBOT_PRIM_PATH, robot_cfg.spawn)
 
-    # The URDF→USD importer often creates two articulation roots: so101_new_calib and
-    # so101_new_calib_01. They come from a reference, so RemovePrim() does not stick.
-    # Deactivate the duplicate so only one robot is visible and controlled.
-    robot_prim = stage.GetPrimAtPath("/World/Robot")
-    if robot_prim.IsValid():
-        deactivated = 0
-        for child in robot_prim.GetChildren():
-            if child.GetName() != "so101_new_calib":
-                child.SetActive(False)
-                deactivated += 1
-        if deactivated:
-            print(f"[INFO] Deactivated {deactivated} duplicate robot prim(s) (kept so101_new_calib).", flush=True)
-
-    # Resolve the actual articulation-root prim path to use for PhysX/ROS2.
-    # In some imported USDs, /World/Robot/so101_new_calib is an Xform container,
-    # while the articulation root is a descendant prim.
+    # Resolve the actual articulation-root prim path to use for PhysX/ROS2 (with the
+    # converter's articulation-root fix this is ROBOT_PRIM_PATH itself).
     try:
         from pxr import UsdPhysics
         _resolved = None
 
-        # Prefer the active child under /World/Robot that matches the expected name.
-        _robot_root = stage.GetPrimAtPath("/World/Robot")
-        _preferred = None
-        if _robot_root.IsValid():
-            for _c in _robot_root.GetChildren():
-                if _c.IsActive() and _c.GetName() == "so101_new_calib":
-                    _preferred = _c
-                    break
-
         # Search for the first active prim that has ArticulationRootAPI applied.
-        _search_root = _preferred if _preferred is not None else stage.GetPrimAtPath(ROBOT_PRIM_PATH)
+        _search_root = stage.GetPrimAtPath(ROBOT_PRIM_PATH)
         if _search_root.IsValid():
             for _p in Usd.PrimRange(_search_root):
                 if _p.IsActive() and _p.HasAPI(UsdPhysics.ArticulationRootAPI):
@@ -358,10 +337,7 @@ def _setup_scene(sim: SimulationContext):
 
         # Update global and cfg so everything uses the true articulation root.
         ROBOT_ARTICULATION_PRIM_PATH = _resolved
-        if _preferred is not None:
-            ROBOT_MODEL_PRIM_PATH = str(_preferred.GetPath())
-        else:
-            ROBOT_MODEL_PRIM_PATH = ROBOT_PRIM_PATH
+        ROBOT_MODEL_PRIM_PATH = ROBOT_PRIM_PATH
         robot_cfg.prim_path = _resolved
     except Exception:
         pass
@@ -393,8 +369,8 @@ def _setup_scene(sim: SimulationContext):
     # 1) Wrist (gripper) camera: under the robot so it moves with the end-effector.
     #    Position (-0.03, 0.05, -0.09) m under gripper_frame_link.
     #    Rotation remains as configured below unless explicitly changed.
-    #    In the Stage panel it appears under World > Robot > so101_new_calib > gripper_frame_link > wrist_cam.
-    _wrist_cam_prim = f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"
+    #    In the Stage panel it appears under World > Robot > Geometry > base_link > ... > gripper_frame_link > wrist_cam.
+    _wrist_cam_prim = f"{ROBOT_MODEL_PRIM_PATH}/{EE_LINK_REL_PATH}/wrist_cam"
     wrist_cam = Camera(CameraCfg(
         prim_path=_wrist_cam_prim,
         update_period=0.0333,
@@ -563,7 +539,7 @@ def _setup_ros2_bridge():
                         ("cam_wrist_helper.inputs:type", "rgb"),
                         ("cam_overhead_helper.inputs:topicName", "/camera/overhead/image_raw"),
                         ("cam_overhead_helper.inputs:type", "rgb"),
-                        ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"),
+                        ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_LINK_REL_PATH}/wrist_cam"),
                         ("rp_wrist.inputs:width", 224),
                         ("rp_wrist.inputs:height", 224),
                         ("rp_overhead.inputs:cameraPrim", "/World/Cameras/overhead_cam"),
@@ -645,7 +621,7 @@ def _setup_ros2_bridge():
                             ("cam_wrist_helper.inputs:type", "rgb"),
                             ("cam_overhead_helper.inputs:topicName", "/camera/overhead/image_raw"),
                             ("cam_overhead_helper.inputs:type", "rgb"),
-                            ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"),
+                            ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_LINK_REL_PATH}/wrist_cam"),
                             ("rp_wrist.inputs:width", 224),
                             ("rp_wrist.inputs:height", 224),
                             ("rp_overhead.inputs:cameraPrim", "/World/Cameras/overhead_cam"),
@@ -1234,7 +1210,7 @@ def main():
             f"  3. Click Connect.\n"
             f"  4. Use the 'VLA Interactive Test' panel on the right to send commands.\n"
             f"  5. To view through a camera: click the video/camera icon at the top of the\n"
-            f"     viewport and select 'overhead_cam' or 'wrist_cam' (under Robot > gripper_frame_link).\n",
+            f"     viewport and select 'overhead_cam' or 'wrist_cam' (under Robot > Geometry > ... > gripper_frame_link).\n",
             flush=True,
         )
 

@@ -71,8 +71,46 @@ Official guide: `docs/source/isaaclab/migrating.rst` in the Isaac Lab repo.
   (`play_reach.py`, `convert_urdf.py`). `AppLauncher` still works but is deprecated.
 - **RL**: `isaaclab.sh train|play --rl_library rsl_rl --task <Task>` (no `-v0` suffix).
 - **URDF import**: importer 3.0 via `isaaclab.sim.converters.UrdfConverter`
-  (`docker/isaac-sim/convert_urdf.py`). Its output prim layout differs from the 2.x
-  importer that produced the committed `robot_description/usd/soarm101.usd`.
+  (`docker/isaac-sim/convert_urdf.py`, run by `scripts/setup_robot_usd.sh`). See
+  "Robot USD" below.
+
+## Robot USD (URDF importer 3.0)
+
+The robot asset is `robot_description/usd/soarm101/soarm101.usda` plus `payloads/`. It
+replaced `robot_description/usd/soarm101.usd`, a 2.x-importer (Isaac Sim 5.x) stage that
+referenced `robot_description/urdf/soarm101_isaacsim/` (both removed). Layout changes:
+
+| | Old (2.x importer) | New (importer 3.0) |
+|---|---|---|
+| Files | stage wrapper + 4 `configuration/*.usd` layers, 23.3 MB | root `.usda` + `payloads/` (7 `.usda`, `geometries.usd`), 5.8 MB |
+| Default prim | `/World` (with a light and physics scene) holding `so101_new_calib` **and a duplicate `so101_new_calib_01`** | the robot, `so101_new_calib`; nothing else |
+| Robot prim in the env | `/World/envs/env_0/Robot/so101_new_calib` | `/World/envs/env_0/Robot` |
+| Links | flat: `so101_new_calib/<link>` | nested along the chain: `Robot/Geometry/base_link/shoulder_link/.../gripper_link/gripper_frame_link` |
+| Joints | `so101_new_calib/joints/<joint>`, `root_joint` at the top | `Robot/Physics/<joint>` (incl. `root_joint`) |
+| Articulation root | `root_joint` (fixed joint to world) | importer: `base_link` (floating base, see below); after `convert_urdf.py`: the robot prim |
+| Physics layers | variants `Physics=PhysX`, `Sensor`, `Robot` | variant `Physics` = `physics` (neutral UsdPhysics, default) / `physx` / `mujoco` / `none` |
+| Drive gains in the asset | stiffness 0.04-4.5, damping ~1e-4, max velocity 573 deg/s | none authored (the URDF has none); max force 10 |
+
+Unchanged: body names and order, joint names and order, joint limits, masses, centres of
+mass, inertia (principal axes ordered differently), 17 convex-hull colliders, and forward
+kinematics (EE and jaw positions match to 0.1 mm at three test poses). The envs set the
+drive gains, limits, self-collision and solver iterations themselves, so the PhysX
+articulation they build reports the same values with either asset.
+
+**Floating base fix.** As shipped, importer 3.0 puts `PhysicsArticulationRootAPI` on
+`base_link` and fixes the base with a world joint (`Physics/root_joint`). PhysX then builds a
+floating-base articulation held by an external constraint: Isaac Lab reports
+`is_fixed_base == False`, the base moves about 2.4 mm, and the arm sags more under zero
+action. `convert_urdf.py` moves the articulation root to the robot prim
+(`--fix-articulation-root`, on by default), which is the same fix Isaac Lab applies when it
+creates a root joint itself. With that fix the reach smoke test and the IK collector behave
+like the old asset: 22/25 targets reached in 45.7 steps on average, against 23/25 in 44.1
+steps with the old asset (random, unseeded targets; both miss a few by 2-9 cm).
+
+`interactive_inference.py` loads the new asset and reaches "environment ready", but Kit logs
+about 30 Hydra `_MarkInstancerDirty` coding-error warnings at startup that the old asset
+did not trigger (the reach env and collector log none). They look cosmetic and have not been
+investigated further.
 
 ## Behavior fixes that came with the port
 

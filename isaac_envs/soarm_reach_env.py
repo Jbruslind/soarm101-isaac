@@ -51,6 +51,15 @@ NUM_JOINTS = 6      # includes gripper
 ARM_JOINT_NAMES = SOARM_JOINT_NAMES[:NUM_ARM_JOINTS]
 EE_BODY_NAME = "gripper_frame_link"
 
+# Robot USD made by URDF importer 3.0 (docker/isaac-sim/convert_urdf.py). Its default prim
+# is the robot (so101_new_calib), so the spawn prim *is* the robot: links are nested
+# along the kinematic chain under Geometry/ and joints live under Physics/.
+ROBOT_USD_PATH = "/robot_description/usd/soarm101/soarm101.usda"
+# gripper_frame_link relative to the robot prim
+EE_LINK_REL_PATH = (
+    "Geometry/base_link/shoulder_link/upper_arm_link/lower_arm_link/wrist_link/gripper_link/gripper_frame_link"
+)
+
 
 class SoarmEnvWindow(BaseEnvWindow):
     """IsaacLab UI window whose "Follow Mode" dropdown matches the Kit visualizer config.
@@ -111,12 +120,11 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
     # Scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=1.5)
 
-    # Robot (USD from URDF import has root at Robot/so101_new_calib; point to it so
-    # only one articulation is found — the USD may also contain so101_new_calib_01)
+    # Robot: the spawned prim is the articulation root (convert_urdf.py puts it there)
     robot_cfg: ArticulationCfg = ArticulationCfg(
-        prim_path="/World/envs/env_.*/Robot/so101_new_calib",
+        prim_path="/World/envs/env_.*/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path="/robot_description/usd/soarm101.usd",
+            usd_path=ROBOT_USD_PATH,
             rigid_props=PhysxRigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -159,7 +167,7 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
     # Camera (optional, for VLA data collection; under same articulation root)
     use_camera: bool = False
     camera_cfg: CameraCfg = CameraCfg(
-        prim_path="/World/envs/env_.*/Robot/so101_new_calib/gripper_frame_link/wrist_cam",
+        prim_path=f"/World/envs/env_.*/Robot/{EE_LINK_REL_PATH}/wrist_cam",
         update_period=0.0333,  # 30 Hz
         height=224,
         width=224,
@@ -255,18 +263,7 @@ class SoarmReachEnv(DirectRLEnv):
             "/World/envs/env_0/Robot", self.cfg.robot_cfg.spawn
         )
 
-        # 2) The URDF→USD converter can produce duplicate roots (so101_new_calib_01).
-        #    They come from a reference, so we deactivate the duplicate instead of removing.
-        import omni.usd
-        from pxr import Usd, UsdPhysics
-        stage = omni.usd.get_context().get_stage()
-        robot_prim = stage.GetPrimAtPath("/World/envs/env_0/Robot")
-        if robot_prim.IsValid():
-            for child in robot_prim.GetChildren():
-                if child.GetName() != "so101_new_calib":
-                    child.SetActive(False)
-
-        # 3) Create the Articulation wrapper *without* spawning again.
+        # 2) Create the Articulation wrapper *without* spawning again.
         saved_spawn = self.cfg.robot_cfg.spawn
         self.cfg.robot_cfg.spawn = None
         self._robot = Articulation(self.cfg.robot_cfg)

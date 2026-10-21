@@ -34,6 +34,8 @@ ros2_ws/install/
 ros2_ws/log/
 
 *.usd
+# The robot asset is committed (regenerate with scripts/setup_robot_usd.sh)
+!robot_description/usd/soarm101/payloads/geometries.usd
 
 # Local config and secrets (copy docker/.env.example -> docker/.env)
 docker/.env
@@ -54,3 +56,4 @@ sunshine_state.json
 core.*
 .bash_history
 *.sh.env
+robot_description/urdf/soarm101_isaacsim/
