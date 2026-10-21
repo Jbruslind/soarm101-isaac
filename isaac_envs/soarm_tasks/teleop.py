@@ -21,6 +21,8 @@ reset the episode (record_demos.py)      R
 =======================================  =======  =======
 
 Roll/pitch keys (Z/X, T/G) are ignored: the task keeps the gripper pointing down (``top_down``).
+The default GUI camera looks from the front-right, so on screen W moves the gripper towards you
+(down-right) and A towards the bin (up-right): see docs/tutorials/fasteners/F5_record_demos.md.
 
 SpaceMouse (``--teleop_device spacemouse``): push/tilt the cap to move/turn (same axes, analog),
 left button toggles the gripper, right button resets the episode (``record_demos.py`` binds its

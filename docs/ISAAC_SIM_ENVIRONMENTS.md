@@ -317,6 +317,8 @@ was running.
 
 ### Demonstrations (issue #33)
 
+Step-by-step walkthrough with pictures: [F5: Record demonstrations](tutorials/fasteners/F5_record_demos.md).
+
 Two sources write the same HDF5 layout: Isaac Lab's `HDF5DatasetFileHandler` format, which
 `replay_demos.py` and Mimic read. The layout is documented in `soarm_tasks/demo_schema.py`. Every
 `demo_<k>` holds:
