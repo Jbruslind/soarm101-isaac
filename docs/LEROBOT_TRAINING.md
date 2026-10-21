@@ -125,7 +125,10 @@ with `validate_lerobot_dataset.py` ([DATA_PIPELINE.md](DATA_PIPELINE.md)). The M
 and action in radians, 1 task. A 200-step ACT smoke run on it (batch 8, fp32) went from loss
 23.7 at step 25 to 3.5 at step 200 at 10.7 steps/s, with 1.2 GB peak alloc (1.8 GB nvidia-smi):
 the 224x224 images make ACT much cheaper than on the 640x480 set below. For SmolVLA, map the
-cameras with `--rename-map '{"observation.images.wrist":"observation.images.camera1","observation.images.overhead":"observation.images.camera2"}'`.
+cameras with `--rename-map '{"observation.images.overhead":"observation.images.camera1","observation.images.wrist":"observation.images.camera2"}'`:
+the top-down view goes to `camera1`, as `up` does in LeRobot's SO-101 example below. The
+10k-step runs and their held-out results are in
+[F6: Fine-tune ACT and SmolVLA](tutorials/fasteners/F6_finetune.md).
 
 The measurements below use the public `lerobot/svla_so101_pickplace`: SO-101, 50 episodes,
 11,939 frames at 30 fps, 2 cameras (`up`, `side`) at 640x480 AV1, 6-D state and action, 1 task.

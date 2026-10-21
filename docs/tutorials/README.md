@@ -40,7 +40,7 @@ GUI over Moonlight. Part 2 scales up with headless Isaac Lab.
 | F3 | Grasp physics: contact angle vs squeeze, `solve_articulation_contact_last` | grasp holds through a lift | planned, needs #28 |
 | F4 | Scripted pick-and-place | ≥ 16/20 successes | planned, needs #32 |
 | [F5](fasteners/F5_record_demos.md) | Record demonstrations: 50 scripted + 5 keyboard teleop, check and replay them | `[F5] PASS`, replay 50/50 | **available** (LeRobot conversion: #34) |
-| F6 | Fine-tune ACT / SmolVLA on 12 GB | loss curve, checkpoint saved | planned, needs #35 |
+| [F6](fasteners/F6_finetune.md) | Convert to LeRobot, fine-tune ACT and SmolVLA on 12 GB, test on held-out demos | `[F6] PASS` (≤ 0.1 rad held-out error) | **available** |
 | F7 | Run your policy in Isaac Sim. **Part 1 milestone** | ≥ 6/10 on M6 | planned, needs #36 |
 
 **Part 2: headless scale-up in Isaac Lab** (scripts in `tutorials/fasteners/part2/`)
