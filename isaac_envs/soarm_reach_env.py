@@ -176,9 +176,13 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
             focal_length=1.93,
             horizontal_aperture=2.65,
         ),
+        # gripper_frame_link: +z points out along the fingers, the fixed jaw is on its +x side
+        # and the moving jaw on its -x side. Mount the camera 7 cm back from the tips outside the
+        # fixed jaw, looking along +z tilted 25 deg towards the jaws, image up = +x. (The old
+        # identity rotation looked along +x, i.e. back at the robot.)
         offset=CameraCfg.OffsetCfg(
-            pos=(0.05, 0.0, 0.02),
-            rot=IDENTITY_QUAT,
+            pos=(0.05, 0.0, -0.07),
+            rot=(0.5373, 0.0, 0.8434, 0.0),  # (x, y, z, w)
             convention="world",
         ),
     )
