@@ -13,7 +13,7 @@ robot (simulated or real) and the VLA policy.  It:
 2. **Builds** an observation dict
 3. **Sends** the observation to the OpenPi server via WebSocket
 4. **Receives** an action chunk (N future actions)
-5. **Publishes** actions one at a time on a 10 Hz timer
+5. **Publishes** actions one at a time on a 30 Hz timer (the contract control rate)
 
 ```mermaid
 graph TD
@@ -29,7 +29,7 @@ graph TD
         OBS["Observation Builder\n- Pack joint state (6-DOF)\n- Resize images to 224x224\n- Attach prompt string"]
         INF["Inference Thread\n(background)\n- WebSocket to OpenPi\n- Receives action chunks"]
         AQ["Action Queue\ndeque of actions"]
-        CTL["Control Timer\n10 Hz\n- Pop action from queue\n- Publish JointTrajectory"]
+        CTL["Control Timer\n30 Hz\n- Pop action from queue\n- Publish JointTrajectory"]
     end
 
     subgraph outputs ["ROS2 Publications"]
@@ -63,11 +63,11 @@ graph TD
 
 | Topic | Type | Rate | Description |
 |---|---|---|---|
-| `/joint_commands` | `trajectory_msgs/JointTrajectory` | 10 Hz | Target joint positions |
+| `/joint_commands` | `sensor_msgs/JointState` | 30 Hz | Absolute target joint positions |
 
 ### Joint Names
 
-The `JointTrajectory` message uses these joint names in order:
+The `JointState` command message uses these joint names in order (`soarm_common.contract.JOINT_NAMES`):
 
 ```
 shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper
@@ -81,7 +81,7 @@ shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper
 |---|---|---|---|
 | `openpi_host` | `localhost` | `OPENPI_HOST` | OpenPi server hostname |
 | `openpi_port` | `8000` | `OPENPI_PORT` | OpenPi server port |
-| `control_rate` | `10.0` | -- | Action publishing rate (Hz) |
+| `control_rate` | `30.0` (`soarm_common.contract.CONTROL_HZ`) | -- | Action publishing rate (Hz); matches the 30 fps the data was recorded at |
 | `prompt` | `"move the robot arm to the target"` | -- | Default task prompt |
 | `action_chunk_size` | `1` | -- | Expected actions per inference |
 
@@ -115,17 +115,17 @@ Inference thread:
 Action queue:
     [a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, b0, b1, ...]
 
-Control timer (10 Hz):
+Control timer (30 Hz):
     t=0: publish a0
-    t=100ms: publish a1
-    t=200ms: publish a2
+    t=33ms: publish a1
+    t=67ms: publish a2
     ...
-    t=900ms: publish a9
-    t=1000ms: publish b0  (new chunk arrived)
+    t=300ms: publish a9
+    t=333ms: publish b0  (new chunk arrived)
 ```
 
 This means even with 50-100 ms network latency, the robot continues
-executing smoothly at 10 Hz.
+executing smoothly at 30 Hz.
 
 ---
 

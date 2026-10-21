@@ -228,7 +228,7 @@ What happens:
    b. Builds observation dict
    c. Sends to OpenPi server via WebSocket
    d. Receives action chunk
-   e. Publishes joint commands at 10 Hz
+   e. Publishes joint commands at 30 Hz
 3. Isaac Sim executes the commanded joint positions
 4. Loop continues until stopped (Ctrl+C)
 ```

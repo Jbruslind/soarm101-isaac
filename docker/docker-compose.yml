@@ -75,6 +75,8 @@ services:
     volumes:
       - ../models:/models:ro
       - ../training/configs:/app/openpi/src/openpi/training/configs_custom:ro
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
     deploy:
       resources:
         reservations:
@@ -109,6 +111,8 @@ services:
     volumes:
       - ../robot_description:/robot_description:ro
       - ../ros2_ws:/ros2_ws:rw
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
       - vla_signals:/tmp/vla_signals:ro
     command: ["ros2", "run", "soarm_vla_bridge", "vla_bridge"]
     restart: "no"
@@ -135,6 +139,9 @@ services:
       - PHOSPHO_BRIDGE_LOG_LEVEL=${PHOSPHO_BRIDGE_LOG_LEVEL:-INFO}
       - PHOSPHO_ROS_EXECUTOR_THREADS=${PHOSPHO_ROS_EXECUTOR_THREADS:-4}
       - PHOSPHO_CAM_MIN_INTERVAL_SEC=${PHOSPHO_CAM_MIN_INTERVAL_SEC:-0.04}
+    volumes:
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
     restart: "no"
 
   # ---------------------------------------------------------------------------
@@ -212,6 +219,8 @@ services:
       - ../data:/data:ro
       - ../models:/models:rw
       - ../training:/training:ro
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
     shm_size: "16g"
     deploy:
       resources:

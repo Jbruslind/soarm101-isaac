@@ -3,16 +3,18 @@
 Register this config by adding it to OpenPi's _CONFIGS dict in
 src/openpi/training/config.py, or by monkey-patching at runtime.
 
-The SO-ARM101 has 6 DOF (5 arm joints + 1 gripper).  Observations include:
-  - 1-2 camera images (wrist, optionally overhead) at 224x224
-  - 6-element state vector (joint positions)
-
-Actions are 6-element vectors (absolute joint position targets).
+The SO-ARM101 has 6 DOF (5 arm joints + 1 gripper). Dataset keys, policy keys, joint order,
+image size (224x224) and action semantics (absolute joint-position targets at 30 Hz) come from
+the shared contract, ``isaac_envs/soarm_common/contract.py``, also used by the sim, the data
+collector and the ROS 2 bridge.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import importlib
+import os
+import sys
 from collections.abc import Sequence
 import pathlib
 
@@ -27,6 +29,25 @@ from openpi.training.config import (
     TrainConfig,
     AssetsConfig,
 )
+
+
+def _load_contract():
+    """Import ``soarm_common.contract``: from PYTHONPATH, $SOARM_COMMON_DIR, /opt/soarm (docker
+    compose mount), a ``soarm_common/`` copy next to this file (deploy scripts sync one) or the
+    repo's isaac_envs/ in a source checkout."""
+    try:
+        return importlib.import_module("soarm_common.contract")
+    except ImportError:
+        pass
+    here = pathlib.Path(os.path.realpath(__file__)).parent
+    for cand in (os.environ.get("SOARM_COMMON_DIR"), "/opt/soarm", str(here), str(here.parents[1] / "isaac_envs")):
+        if cand and (pathlib.Path(cand) / "soarm_common" / "contract.py").is_file():
+            sys.path.insert(0, cand)
+            return importlib.import_module("soarm_common.contract")
+    raise ImportError("soarm_common.contract not found; mount isaac_envs/soarm_common or set SOARM_COMMON_DIR")
+
+
+C = _load_contract()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -53,19 +74,16 @@ class SoarmDataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "images": {
-                            "cam_wrist": "observation.images.wrist",
-                            "cam_overhead": "observation.images.third_person",
-                        },
-                        "state": "observation.state",
-                        "actions": "action",
+                        C.POLICY_IMAGES_KEY: {cam.policy_key: cam.dataset_key for cam in C.CAMERAS},
+                        C.POLICY_STATE_KEY: C.DATASET_STATE_KEY,
+                        C.POLICY_ACTIONS_KEY: C.DATASET_ACTION_KEY,
                     }
                 )
             ]
         )
     )
 
-    action_sequence_keys: Sequence[str] = ("action",)
+    action_sequence_keys: Sequence[str] = (C.DATASET_ACTION_KEY,)
 
     @override
     def create(
@@ -77,7 +95,8 @@ class SoarmDataConfig(DataConfigFactory):
         )
 
         if self.use_delta_joint_actions:
-            delta_action_mask = _transforms.make_bool_mask(5, -1)  # 5 arm joints delta, gripper absolute
+            # arm joints delta, gripper absolute
+            delta_action_mask = _transforms.make_bool_mask(C.NUM_ARM_JOINTS, -(C.NUM_JOINTS - C.NUM_ARM_JOINTS))
             data_transforms = data_transforms.push(
                 inputs=[_transforms.DeltaActions(delta_action_mask)],
                 outputs=[_transforms.AbsoluteActions(delta_action_mask)],

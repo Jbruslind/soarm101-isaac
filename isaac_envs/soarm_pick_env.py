@@ -12,18 +12,13 @@ from typing import Sequence
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg, RigidObject
-from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
 
 from isaaclab_physx.sim.schemas import PhysxCollisionPropertiesCfg, PhysxRigidBodyPropertiesCfg
 from isaaclab_physx.sim.spawners.materials import PhysxRigidBodyMaterialCfg
 
-from soarm_reach_env import (
-    IDENTITY_QUAT,
-    SoarmReachEnv,
-    SoarmReachEnvCfg,
-    NUM_JOINTS,
-)
+from soarm_common import contract as C
+from soarm_reach_env import IDENTITY_QUAT, SoarmReachEnv, SoarmReachEnvCfg
 
 
 @configclass
@@ -31,7 +26,7 @@ class SoarmPickEnvCfg(SoarmReachEnvCfg):
     """Configuration for the SO-ARM101 pick-and-place task."""
 
     episode_length_s: float = 10.0
-    observation_space: int = NUM_JOINTS * 2 + 3 + 3 + 3  # + cube pos + target pos
+    observation_space: int = C.NUM_JOINTS * 2 + 3 + 3 + 3  # + cube pos + target pos
 
     # Cube
     # Isaac Lab 3.0 matches prim-path regexes against the whole path, so ".*" would also match
@@ -53,16 +48,6 @@ class SoarmPickEnvCfg(SoarmReachEnvCfg):
             ),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.15, 0.0, 0.015)),
-    )
-
-    # Third-person camera: closer than the reach view so the 3 cm cube is visible; looks at
-    # the middle of the cube area (0.19, 0, 0.03) from (0.45, 0.40, 0.30).
-    third_person_camera_cfg: CameraCfg = SoarmReachEnvCfg().third_person_camera_cfg.replace(
-        offset=CameraCfg.OffsetCfg(
-            pos=(0.45, 0.40, 0.30),
-            rot=(0.223831, 0.12147, -0.849938, 0.461249),  # (x, y, z, w)
-            convention="world",
-        ),
     )
 
     # Cube spawn area (closer than ~12 cm to the base the gripper can't reach down to the
@@ -127,7 +112,7 @@ class SoarmPickEnv(SoarmReachEnv):
 
         stage = omni.usd.get_context().get_stage()
         meshes, instances = [], set()
-        for prim in Usd.PrimRange(stage.GetPrimAtPath("/World/envs/env_0/Robot"), Usd.TraverseInstanceProxies()):
+        for prim in Usd.PrimRange(stage.GetPrimAtPath(f"{C.ENV0_PATH}/Robot"), Usd.TraverseInstanceProxies()):
             if prim.GetName() not in ("gripper_link", "moving_jaw_so101_v1_link"):
                 continue
             for mesh in Usd.PrimRange(prim, Usd.TraverseInstanceProxies()):

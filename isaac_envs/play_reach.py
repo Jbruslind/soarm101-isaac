@@ -45,7 +45,7 @@ def main():
         cfg = SoarmReachEnvCfg()
         cfg.num_envs = args.num_envs
         cfg.scene.num_envs = args.num_envs
-        cfg.use_camera = args.use_camera
+        cfg.use_wrist_camera = args.use_camera
 
         env = SoarmReachEnv(cfg, render_mode="human")
         obs, info = env.reset()

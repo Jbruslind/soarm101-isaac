@@ -2,8 +2,13 @@
 
 The robot must move its end-effector (gripper_frame_link) to a randomly
 sampled target position in the workspace.  Observations include joint
-positions, joint velocities, and (optionally) a wrist camera image.
-Actions are 6 joint-position deltas plus 1 gripper command.
+positions, joint velocities, and (optionally) the wrist and overhead camera images.
+Actions are 6 normalised joint-position deltas (5 arm joints + gripper); see
+``soarm_common.contract`` for how they relate to the absolute joint targets that are
+recorded and sent by policies.
+
+Robot, cameras, timing and keys come from ``soarm_common`` (one definition shared with
+``interactive_inference.py``, the data collector and the ROS 2 bridge).
 
 Isaac Lab 3.0 / Isaac Sim 6.2: quaternions are (x, y, z, w), asset and sensor data
 are ProxyArray (use ``.torch``), and the viewport camera is a Kit visualizer
@@ -12,13 +17,10 @@ are ProxyArray (use ``.torch``), and the viewport camera is a Kit visualizer
 
 from __future__ import annotations
 
-import math
 import torch
-from dataclasses import dataclass, field
 from typing import Sequence
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, Articulation
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.envs.ui import BaseEnvWindow
@@ -27,39 +29,15 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 from isaaclab.sensors import CameraCfg, Camera
-from isaaclab_physx.physics import PhysxCfg
-from isaaclab_physx.sim.schemas import (
-    PhysxArticulationRootPropertiesCfg,
-    PhysxCollisionPropertiesCfg,
-    PhysxRigidBodyPropertiesCfg,
-)
 from isaaclab_visualizers.kit import KitVisualizerCfg
 
+from soarm_common import contract as C
+from soarm_common.cameras import camera_prim_path, make_camera_cfg
+from soarm_common.robot import check_joint_limits, make_physx_cfg, make_robot_cfg
+from soarm_common.scene import spawn_ground_and_light
+
 IDENTITY_QUAT = (0.0, 0.0, 0.0, 1.0)  # (x, y, z, w)
-
-# SO-ARM101 joint names (from URDF, shoulder-to-gripper order)
-SOARM_JOINT_NAMES = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
-
-NUM_ARM_JOINTS = 5  # excludes gripper
-NUM_JOINTS = 6      # includes gripper
-ARM_JOINT_NAMES = SOARM_JOINT_NAMES[:NUM_ARM_JOINTS]
-EE_BODY_NAME = "gripper_frame_link"
-
-# Robot USD made by URDF importer 3.0 (docker/isaac-sim/convert_urdf.py). Its default prim
-# is the robot (so101_new_calib), so the spawn prim *is* the robot: links are nested
-# along the kinematic chain under Geometry/ and joints live under Physics/.
-ROBOT_USD_PATH = "/robot_description/usd/soarm101/soarm101.usda"
-# gripper_frame_link relative to the robot prim
-EE_LINK_REL_PATH = (
-    "Geometry/base_link/shoulder_link/upper_arm_link/lower_arm_link/wrist_link/gripper_link/gripper_frame_link"
-)
+_ENV_REGEX_PATH = C.ENV_ROBOT_PRIM_PATH.rsplit("/", 1)[0]  # /World/envs/env_.*
 
 
 class SoarmEnvWindow(BaseEnvWindow):
@@ -95,22 +73,12 @@ class SoarmEnvWindow(BaseEnvWindow):
 class SoarmReachEnvCfg(DirectRLEnvCfg):
     """Configuration for the SO-ARM101 reach task."""
 
-    # Simulation. The viewport camera follows the robot when a Kit visualizer is
-    # open (--viz kit, e.g. via scripts/isaac.sh --gui).
+    # Simulation (contract timing: 120 Hz physics, 30 Hz control). The viewport camera follows the
+    # robot when a Kit visualizer is open (--viz kit, e.g. via scripts/isaac.sh --gui).
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120.0,
-        render_interval=2,
-        # PhysX scene settings from Isaac Lab's SO-101 cube-stack task (contrib/stack/stack_env_cfg.py).
-        # solve_articulation_contact_last resolves contacts after the joint drives, so object contacts
-        # stall the position-driven jaw instead of the jaw tunnelling into a grasped object (Isaac Lab
-        # 3.0 CHANGELOG; GitHub issue #28). It doesn't change free-space (reach) motion.
-        physics=PhysxCfg(
-            solve_articulation_contact_last=True,
-            bounce_threshold_velocity=0.01,
-            friction_correlation_distance=0.00625,
-            gpu_found_lost_aggregate_pairs_capacity=1024 * 1024 * 4,
-            gpu_total_aggregate_pairs_capacity=2**21,
-        ),
+        dt=C.PHYSICS_DT,
+        render_interval=C.RENDER_INTERVAL,
+        physics=make_physx_cfg(),
         default_visualizer_cfg=KitVisualizerCfg(
             origin_type="asset",
             origin_track_path="robot",
@@ -118,7 +86,7 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
             lookat=(0.0, 0.0, 0.2),
         ),
     )
-    decimation: int = 4  # policy runs at 30 Hz
+    decimation: int = C.DECIMATION  # policy runs at C.CONTROL_HZ (30 Hz)
     ui_window_class_type: type | None = SoarmEnvWindow
 
     # Episode
@@ -126,100 +94,27 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
     num_envs: int = 1
 
     # Observation / action spaces
-    observation_space: int = NUM_JOINTS * 2 + 3  # joint pos + vel + target xyz
-    action_space: int = NUM_JOINTS  # 5 arm joints + 1 gripper
+    observation_space: int = C.NUM_JOINTS * 2 + 3  # joint pos + vel + target xyz
+    action_space: int = C.NUM_JOINTS  # 5 arm joints + 1 gripper
 
     # Scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=1.5)
 
-    # Robot: the spawned prim is the articulation root (convert_urdf.py puts it there)
-    robot_cfg: ArticulationCfg = ArticulationCfg(
-        prim_path="/World/envs/env_.*/Robot",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=ROBOT_USD_PATH,
-            rigid_props=PhysxRigidBodyPropertiesCfg(
-                disable_gravity=False,
-                max_depenetration_velocity=5.0,
-            ),
-            articulation_props=PhysxArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
-                solver_position_iteration_count=8,
-                solver_velocity_iteration_count=0,
-            ),
-        ),
-        init_state=ArticulationCfg.InitialStateCfg(
-            joint_pos={
-                "shoulder_pan": 0.0,
-                "shoulder_lift": 0.0,
-                "elbow_flex": 0.0,
-                "wrist_flex": 0.0,
-                "wrist_roll": 0.0,
-                "gripper": 0.0,
-            },
-        ),
-        actuators={
-            "arm": ImplicitActuatorCfg(
-                joint_names_expr=["shoulder_pan", "shoulder_lift", "elbow_flex",
-                                  "wrist_flex", "wrist_roll"],
-                joint_velocity_limit=2.0,
-                joint_effort_limit=30.0,
-                stiffness=80.0,
-                damping=4.0,
-            ),
-            "gripper": ImplicitActuatorCfg(
-                joint_names_expr=["gripper"],
-                joint_velocity_limit=2.0,
-                joint_effort_limit=10.0,
-                stiffness=80.0,
-                damping=4.0,
-            ),
-        },
+    # Robot (soarm_common.robot): the spawned prim is the articulation root
+    robot_cfg: ArticulationCfg = make_robot_cfg(C.ENV_ROBOT_PRIM_PATH)
+
+    # Wrist camera (soarm_common.contract.WRIST_CAMERA), under the EE link of every env's robot
+    use_wrist_camera: bool = False
+    wrist_camera_cfg: CameraCfg = make_camera_cfg(
+        C.WRIST_CAMERA, camera_prim_path(C.WRIST_CAMERA, C.ENV_ROBOT_PRIM_PATH, _ENV_REGEX_PATH)
     )
 
-    # Camera (optional, for VLA data collection; under same articulation root)
-    use_camera: bool = False
-    camera_cfg: CameraCfg = CameraCfg(
-        prim_path=f"/World/envs/env_.*/Robot/{EE_LINK_REL_PATH}/wrist_cam",
-        update_period=0.0333,  # 30 Hz
-        height=224,
-        width=224,
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=1.93,
-            horizontal_aperture=2.65,
-        ),
-        # gripper_frame_link: +z points out along the fingers, the fixed jaw is on its +x side
-        # and the moving jaw on its -x side. Mount the camera 7 cm back from the tips outside the
-        # fixed jaw, looking along +z tilted 25 deg towards the jaws, image up = +x. (The old
-        # identity rotation looked along +x, i.e. back at the robot.)
-        offset=CameraCfg.OffsetCfg(
-            pos=(0.05, 0.0, -0.07),
-            rot=(0.5373, 0.0, 0.8434, 0.0),  # (x, y, z, w)
-            convention="world",
-        ),
-    )
-
-    # Third-person camera (optional, for visual verification in headless runs)
-    use_third_person_camera: bool = False
-    third_person_camera_cfg: CameraCfg = CameraCfg(
-        # Note: The camera spawner expects the parent prim to exist and does not accept regex prim paths.
-        # Our current collector uses num_envs=1, so we place it under env_0.
-        prim_path="/World/envs/env_0/Cameras/third_person_cam",
-        update_period=0.0333,  # 30 Hz
-        height=224,
-        width=224,
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(
-            focal_length=1.93,
-            horizontal_aperture=2.65,
-        ),
-        # Placed in world frame, looking at the robot workspace (0, 0, 0.2): yaw -135 deg,
-        # pitch 14.85 deg down. (An identity rotation looks along +X, away from the robot.)
-        offset=CameraCfg.OffsetCfg(
-            pos=(0.8, 0.8, 0.5),
-            rot=(0.1194, 0.049457, -0.916132, 0.379474),  # (x, y, z, w)
-            convention="world",
-        ),
+    # Overhead camera (soarm_common.contract.OVERHEAD_CAMERA). The camera spawner needs an existing
+    # parent prim and doesn't accept regex paths, so it lives under env_0 (the collector uses
+    # num_envs=1, whose env_0 origin is the world origin).
+    use_overhead_camera: bool = False
+    overhead_camera_cfg: CameraCfg = make_camera_cfg(
+        C.OVERHEAD_CAMERA, camera_prim_path(C.OVERHEAD_CAMERA, f"{C.ENV0_PATH}/Robot", C.ENV0_PATH)
     )
 
     # Target position sampling bounds (meters, relative to robot base)
@@ -232,7 +127,7 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
     success_threshold: float = 0.02  # 2 cm
 
     # Action scaling
-    action_scale: float = 0.05  # radians per step
+    action_scale: float = C.ENV_DELTA_ACTION_SCALE  # rad per step for an action of 1
 
 
 class SoarmReachEnv(DirectRLEnv):
@@ -246,14 +141,12 @@ class SoarmReachEnv(DirectRLEnv):
         self._target_pos = torch.zeros(self.num_envs, 3, device=self.device)
 
         self._robot: Articulation = self.scene["robot"]
-        self._camera: Camera | None = self.scene.sensors["wrist_cam"] if "wrist_cam" in self.scene.sensors else None
-        self._third_person_camera: Camera | None = (
-            self.scene.sensors["third_person_cam"] if "third_person_cam" in self.scene.sensors else None
-        )
+        self._joint_pos_target: torch.Tensor | None = None
 
         # Resolve the end-effector by name; body order in the imported USD puts the moving
         # jaw just before gripper_frame_link, so a fixed index is easy to get wrong.
-        self._ee_body_idx = self._robot.find_bodies(EE_BODY_NAME)[0][0]
+        self._ee_body_idx = self._robot.find_bodies(C.EE_BODY_NAME)[0][0]
+        check_joint_limits(self._robot)
 
         self._target_min = torch.tensor(cfg.target_min, device=self.device)
         self._target_max = torch.tensor(cfg.target_max, device=self.device)
@@ -269,15 +162,22 @@ class SoarmReachEnv(DirectRLEnv):
         return self._robot.data.body_pos_w.torch[:, self._ee_body_idx, :]
 
     @property
+    def joint_pos_target(self) -> torch.Tensor | None:
+        """Absolute joint-position targets (rad) applied in the last step, shape ``(num_envs, 6)``.
+
+        This is the contract action (``soarm_common.contract.ACTION_TYPE``) equivalent to the
+        delta action passed to :meth:`step`; the data collector records it.
+        """
+        return self._joint_pos_target
+
+    @property
     def target_pos(self) -> torch.Tensor:
         """Current target position(s), shape ``(num_envs, 3)``."""
         return self._target_pos
 
     def _setup_scene(self):
         # 1) Spawn the robot USD into the stage manually.
-        self.cfg.robot_cfg.spawn.func(
-            "/World/envs/env_0/Robot", self.cfg.robot_cfg.spawn
-        )
+        self.cfg.robot_cfg.spawn.func(f"{C.ENV0_PATH}/Robot", self.cfg.robot_cfg.spawn)
 
         # 2) Create the Articulation wrapper *without* spawning again.
         saved_spawn = self.cfg.robot_cfg.spawn
@@ -286,42 +186,29 @@ class SoarmReachEnv(DirectRLEnv):
         self.cfg.robot_cfg.spawn = saved_spawn
         self.scene.articulations["robot"] = self._robot
 
-        if self.cfg.use_camera:
-            self._camera = Camera(self.cfg.camera_cfg)
-            # Ensure base-class attributes exist so update() doesn't raise if init failed.
-            if not hasattr(self._camera, "_timestamp"):
-                self._camera._timestamp = 0.0
-            if not hasattr(self._camera, "_is_outdated"):
-                self._camera._is_outdated = False
-            self.scene.sensors["wrist_cam"] = self._camera
-
-        if self.cfg.use_third_person_camera:
+        self._cameras: dict[str, Camera] = {}
+        if self.cfg.use_overhead_camera:
             # The camera spawner requires the parent prim to exist.
             import omni.usd
-            from pxr import Usd
 
-            stage = omni.usd.get_context().get_stage()
-            stage.DefinePrim("/World/envs/env_0/Cameras", "Xform")
+            omni.usd.get_context().get_stage().DefinePrim(f"{C.ENV0_PATH}/Cameras", "Xform")
+        for spec, use, cam_cfg in (
+            (C.WRIST_CAMERA, self.cfg.use_wrist_camera, self.cfg.wrist_camera_cfg),
+            (C.OVERHEAD_CAMERA, self.cfg.use_overhead_camera, self.cfg.overhead_camera_cfg),
+        ):
+            if not use:
+                continue
+            cam = Camera(cam_cfg)
+            # Ensure base-class attributes exist so update() doesn't raise if init failed.
+            if not hasattr(cam, "_timestamp"):
+                cam._timestamp = 0.0
+            if not hasattr(cam, "_is_outdated"):
+                cam._is_outdated = False
+            self.scene.sensors[spec.prim_name] = cam
+            self._cameras[spec.obs_key] = cam
 
-            self._third_person_camera = Camera(self.cfg.third_person_camera_cfg)
-            if not hasattr(self._third_person_camera, "_timestamp"):
-                self._third_person_camera._timestamp = 0.0
-            if not hasattr(self._third_person_camera, "_is_outdated"):
-                self._third_person_camera._is_outdated = False
-            self.scene.sensors["third_person_cam"] = self._third_person_camera
-
-        # Ground plane (local spawner – avoids Nucleus dependency)
-        ground_cfg = sim_utils.CuboidCfg(
-            size=(100.0, 100.0, 0.02),
-            rigid_props=PhysxRigidBodyPropertiesCfg(kinematic_enabled=True),
-            collision_props=PhysxCollisionPropertiesCfg(),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.3, 0.3)),
-        )
-        ground_cfg.func("/World/ground", ground_cfg, translation=(0.0, 0.0, -0.01))
-
-        # Lighting
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/light", light_cfg)
+        # Ground plane and lighting (shared with interactive_inference.py)
+        spawn_ground_and_light()
 
         # Target marker
         self._target_marker = VisualizationMarkers(
@@ -356,10 +243,9 @@ class SoarmReachEnv(DirectRLEnv):
 
         obs_dict = {"policy": obs}
 
-        if self._camera is not None:
-            obs_dict["wrist_rgb"] = self._camera.data.output["rgb"].torch
-        if self._third_person_camera is not None:
-            obs_dict["third_person_rgb"] = self._third_person_camera.data.output["rgb"].torch
+        # Camera images under the contract keys (CameraSpec.obs_key): "wrist_rgb", "overhead_rgb"
+        for key, cam in self._cameras.items():
+            obs_dict[key] = cam.data.output["rgb"].torch
 
         return obs_dict
 
@@ -384,11 +270,11 @@ class SoarmReachEnv(DirectRLEnv):
 
         # Randomize joint positions near zero
         num = len(env_ids)
-        noise = torch.randn(num, NUM_JOINTS, device=self.device) * 0.1
-        default_pos = torch.zeros(num, NUM_JOINTS, device=self.device)
+        noise = torch.randn(num, C.NUM_JOINTS, device=self.device) * 0.1
+        default_pos = torch.zeros(num, C.NUM_JOINTS, device=self.device)
         self._robot.write_joint_state_to_sim_index(
             position=default_pos + noise,
-            velocity=torch.zeros(num, NUM_JOINTS, device=self.device),
+            velocity=torch.zeros(num, C.NUM_JOINTS, device=self.device),
             env_ids=env_ids,
         )
 
