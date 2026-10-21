@@ -103,8 +103,11 @@ pre-step distance. With both fixes the IK collector reaches every target (5/5 ep
 It sat at (0.8, 0.8, 0.5) with an identity rotation, which in the `world` convention looks
 along +X, at an empty horizon. It now looks at the workspace point (0, 0, 0.2).
 
-## Known issue
+### The IsaacLab window showed "World" as the viewer follow mode
 
 With `KitVisualizerCfg(origin_type="asset", origin_track_path="robot")` as the env's
-`default_visualizer_cfg`, the viewer's follow mode shows "World". For this fixed-base arm the
-view is the same, so it has not been investigated further.
+`default_visualizer_cfg`, the camera did track the robot (`origin_track_path` is the scene
+asset key, optionally `"robot/<body>"`), but the IsaacLab window's Viewer Settings > Follow Mode
+dropdown said "World". Isaac Lab 3.0's `BaseEnvWindow` always builds that dropdown on its first
+entry and never reads the visualizer config. The reach env now sets
+`ui_window_class_type = SoarmEnvWindow`, which selects the configured entry ("Robot").
