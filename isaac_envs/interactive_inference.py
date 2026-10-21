@@ -367,8 +367,10 @@ def _setup_scene(sim: SimulationContext):
     stage.DefinePrim("/World/Cameras", "Xform")
 
     # 1) Wrist (gripper) camera: under the robot so it moves with the end-effector.
-    #    Position (-0.03, 0.05, -0.09) m under gripper_frame_link.
-    #    Rotation remains as configured below unless explicitly changed.
+    #    Position (-0.03, 0.05, -0.09) m under gripper_frame_link: 9 cm behind the tool tip, 3 cm
+    #    above it (gripper_frame_link +Z is the tool axis, +X points down at the zero pose).
+    #    Rotation: -58 deg about the link's Y axis, so the camera (forward +X, up +Z in the "world"
+    #    convention) looks along the tool axis pitched 32 deg toward the jaws, image up = link -X.
     #    In the Stage panel it appears under World > Robot > Geometry > base_link > ... > gripper_frame_link > wrist_cam.
     _wrist_cam_prim = f"{ROBOT_MODEL_PRIM_PATH}/{EE_LINK_REL_PATH}/wrist_cam"
     wrist_cam = Camera(CameraCfg(
@@ -379,14 +381,15 @@ def _setup_scene(sim: SimulationContext):
         spawn=sim_utils.PinholeCameraCfg(focal_length=1.93, horizontal_aperture=2.65),
         offset=CameraCfg.OffsetCfg(
             pos=(-0.03, 0.05, -0.09),
-            rot=(0.0, 0.961262, 0.0, -0.275637),  # (x, y, z, w); Euler (-180, -32, -180) deg (x,y,z)
+            rot=(0.0, -0.484810, 0.0, 0.874620),  # (x, y, z, w): -58 deg about Y
             convention="world",
         ),
     ))
 
     # 2) Overhead camera: exact transform requested for Isaac Sim camera prim:
     #    Translate = (0.1, 0.0, 0.8), Orient (Euler XYZ deg) = (0, -20, 0).
-    # Keep convention="world" so this is applied as a direct world-space camera pose.
+    # The Euler angles are for the USD camera axes (looks down -Z, +Y up), i.e. the "opengl"
+    # convention: (0, -20, 0) looks down, tilted 20 deg toward +X (the robot's workspace).
     _overhead_euler_deg = (0.0, -20.0, 0.0)
     _overhead_quat = _euler_xyz_to_quat_wxyz(*_overhead_euler_deg)
     _norm = math.sqrt(sum(x * x for x in _overhead_quat))
@@ -403,7 +406,7 @@ def _setup_scene(sim: SimulationContext):
         offset=CameraCfg.OffsetCfg(
             pos=(0.1, 0.0, 0.8),
             rot=_wxyz_to_xyzw(_overhead_quat),
-            convention="world",
+            convention="opengl",
         ),
     ))
 
@@ -1214,11 +1217,20 @@ def main():
             flush=True,
         )
 
+    # Isaac Lab 3.0 only pumps Kit (app.update) from a Kit visualizer (GUI / livestream) or when an
+    # Isaac Lab camera fetches data. The OmniGraph ROS 2 graph (joint pub/sub, articulation controller,
+    # camera helpers) and its render products only run inside app.update, so headless runs would
+    # publish no images and ignore /joint_commands. Pump Kit on render steps; this is a no-op when a
+    # Kit visualizer already does it.
+    from isaaclab_physx.renderers.isaac_rtx_renderer_utils import ensure_isaac_rtx_render_update
+
     # -- Main simulation loop --
     step_count = 0
     while simulation_app.is_running():
         sim.step()
         step_count += 1
+        if step_count % sim.cfg.render_interval == 0:
+            ensure_isaac_rtx_render_update(force=True)
 
         # Update robot data
         robot.update(sim.cfg.dt)

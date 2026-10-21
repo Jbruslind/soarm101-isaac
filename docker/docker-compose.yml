@@ -27,7 +27,9 @@ services:
       - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/usr/local/share/middleware_profiles/rtps_udp_profile.xml
+      # UDP-only Fast DDS, matching ros2-bridge / phospho-bridge (no shared memory across
+      # containers). The 5.x image's rtps_udp_profile.xml is not shipped in 6.2.
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
       - ISAAC_SIM_HEADLESS=${ISAAC_SIM_HEADLESS:-1}
     volumes:
       - ../robot_description:/robot_description:ro
@@ -99,7 +101,7 @@ services:
       - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
-      # Isaac Sim sets FASTRTPS_DEFAULT_PROFILES_FILE to UDP-only. The default Fast DDS
+      # Isaac Sim runs Fast DDS UDP-only (FASTDDS_BUILTIN_TRANSPORTS above). The default Fast DDS
       # stack may otherwise use shared memory for localhost peers; Isaac's subscriber
       # then never sees /joint_commands. Force UDP so bridge ↔ Sim discovery matches.
       - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
