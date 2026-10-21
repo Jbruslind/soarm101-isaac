@@ -69,3 +69,6 @@ data/tutorials/
 
 # Demo HDF5 files (isaac_envs/soarm_tasks/scripts/generate_demos.py, record_demos.py)
 data/demos/
+
+# LeRobot datasets converted from them (training/scripts/hdf5_to_lerobot.py)
+data/lerobot/

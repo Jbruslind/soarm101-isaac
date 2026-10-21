@@ -1,8 +1,10 @@
-"""Collect episodes from Isaac Lab environments and save in LeRobot v3.0 format.
+"""Collect episodes from the SoarmReachEnv / SoarmPickEnv Isaac Lab environments.
 
 Uses an IK-based scripted policy to generate smooth, goal-directed reaching
-demonstrations.  Captures joint states, camera images, and language
-instructions, and writes episodes to disk as Parquet + MP4 + JSON metadata.
+demonstrations.  Captures joint states, joint targets, camera images and the
+language instruction, and writes them to ``<output-dir>/<env>.hdf5`` in the demo
+HDF5 layout (``soarm_tasks.demo_schema``). Convert that file to a LeRobot v3.0
+dataset with ``training/scripts/hdf5_to_lerobot.py`` (docs/DATA_PIPELINE.md).
 
 Usage (inside Isaac Sim container):
     /isaac-sim/python.sh sim_data_collector.py \
@@ -21,19 +23,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-try:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-except ImportError:
-    pa = None
-    pq = None
-
-try:
-    import av
-except ImportError:
-    av = None
-
-
 from soarm_common import contract as C
 
 FPS = C.DATASET_FPS  # one frame per control step
@@ -44,168 +33,67 @@ LANGUAGE_INSTRUCTIONS = {
 }
 
 
-class LeRobotWriter:
-    """Writes episode data in LeRobot v3.0 format."""
+class DemoHDF5Writer:
+    """Writes episodes as a demo HDF5 file (the ``soarm_tasks.demo_schema`` layout).
 
-    def __init__(self, output_dir: str, fps: int = FPS, use_camera: bool = True):
-        self.output_dir = Path(output_dir)
+    This replaced ``LeRobotWriter`` (GitHub issue #34), which wrote its own flat parquet/MP4/JSON
+    layout that LeRobot could not load. LeRobot datasets are now made in one place,
+    ``training/scripts/hdf5_to_lerobot.py``, with the LeRobot API itself, from this file or from
+    the fastener demos (docs/DATA_PIPELINE.md).
+
+    Per episode it writes the subset of the schema that the conversion needs: ``joint_pos_targets``
+    (and the same array as ``actions``), ``obs/joint_pos``, the camera images and the prompt. There
+    is no ``initial_state``, so these files cannot be replayed with ``replay_demos.py``.
+    """
+
+    def __init__(self, path: str, env_name: str, fps: int = FPS):
+        import h5py
+
+        from soarm_tasks import demo_schema
+
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.fps = fps
-        self.use_camera = use_camera
-        self.episodes: list[dict] = []
-        self.all_frames: list[dict] = []
-        self.video_writers: dict[str, object] = {}
+        self.file = h5py.File(self.path, "w")
+        self.data = self.file.create_group("data")
+        for key, value in demo_schema.file_attrs().items():
+            self.data.attrs[key] = value
+        self.data.attrs["env_args"] = json.dumps({"env_name": env_name, "type": 2})
+        self.data.attrs["total"] = 0
         self.episode_idx = 0
-        self.global_frame_idx = 0
+        self._demo_schema = demo_schema
 
-        (self.output_dir / "meta").mkdir(parents=True, exist_ok=True)
-        (self.output_dir / "meta" / "episodes").mkdir(exist_ok=True)
-        (self.output_dir / "data").mkdir(exist_ok=True)
-        (self.output_dir / "videos").mkdir(exist_ok=True)
+    def start_episode(self, task: str):
+        self._task = task
+        self._frames: dict[str, list[np.ndarray]] = {}
 
-    def start_episode(self, task: str = "reach_target"):
-        self._current_frames: list[dict] = []
-        self._current_task = task
-        self._episode_start_frame = self.global_frame_idx
-        self._video_containers: dict = {}
+    def add_frame(self, state: np.ndarray, action: np.ndarray, images: dict[str, np.ndarray] | None = None):
+        """``state`` joint positions before the step, ``action`` the absolute joint target applied
+        (rad, contract order); ``images`` keyed by the camera ``obs_key`` (``wrist_rgb``, ...)."""
+        S = self._demo_schema
+        self._frames.setdefault(S.JOINT_POS, []).append(np.asarray(state, dtype=np.float32))
+        self._frames.setdefault(S.JOINT_POS_TARGETS, []).append(np.asarray(action, dtype=np.float32))
+        for obs_key, img in (images or {}).items():
+            self._frames.setdefault(f"obs/{obs_key}", []).append(np.asarray(img, dtype=np.uint8))
 
-    def add_frame(
-        self,
-        state: np.ndarray,
-        action: np.ndarray,
-        language_instruction: str = "",
-        images: dict[str, np.ndarray] | None = None,
-        timestamp: float | None = None,
-    ):
-        frame = {
-            "episode_index": self.episode_idx,
-            "frame_index": len(self._current_frames),
-            "index": self.global_frame_idx,
-            "timestamp": timestamp or (len(self._current_frames) / self.fps),
-            C.DATASET_TASK_KEY: language_instruction,
-        }
-
-        for i, name in enumerate(C.JOINT_NAMES):
-            frame[f"{C.DATASET_STATE_KEY}.{name}"] = float(state[i]) if i < len(state) else 0.0
-        for i, name in enumerate(C.JOINT_NAMES):
-            frame[f"{C.DATASET_ACTION_KEY}.{name}"] = float(action[i]) if i < len(action) else 0.0
-
-        frame[C.DATASET_STATE_KEY] = state.tolist()
-        frame[C.DATASET_ACTION_KEY] = action.tolist()
-
-        self._current_frames.append(frame)
-        self.global_frame_idx += 1
-
-        if images and av is not None:
-            for cam_name, img_array in images.items():
-                self._write_video_frame(cam_name, img_array)
-
-    def _write_video_frame(self, cam_name: str, img: np.ndarray):
-        """``cam_name`` is the dataset key, e.g. "observation.images.wrist"."""
-        video_key = f"{self.episode_idx}_{cam_name}"
-        if video_key not in self._video_containers:
-            video_path = (
-                self.output_dir
-                / "videos"
-                / f"{cam_name}_episode_{self.episode_idx:06d}.mp4"
-            )
-            container = av.open(str(video_path), mode="w")
-            stream = container.add_stream("h264", rate=self.fps)
-            stream.width = img.shape[1]
-            stream.height = img.shape[0]
-            stream.pix_fmt = "yuv420p"
-            self._video_containers[video_key] = (container, stream)
-
-        container, stream = self._video_containers[video_key]
-        frame = av.VideoFrame.from_ndarray(img, format="rgb24")
-        for packet in stream.encode(frame):
-            container.mux(packet)
-
-    def end_episode(self):
-        for key, (container, stream) in self._video_containers.items():
-            for packet in stream.encode():
-                container.mux(packet)
-            container.close()
-        self._video_containers.clear()
-
-        ep_len = len(self._current_frames)
-        self.episodes.append({
-            "episode_index": self.episode_idx,
-            "tasks": [self._current_task],
-            "length": ep_len,
-        })
-
-        self.all_frames.extend(self._current_frames)
+    def end_episode(self, success: bool, reset_index: int):
+        S = self._demo_schema
+        demo = self.data.create_group(f"demo_{self.episode_idx}")
+        arrays = {k: np.stack(v) for k, v in self._frames.items()}
+        arrays[S.ACTIONS] = arrays[S.JOINT_POS_TARGETS]
+        for key, arr in arrays.items():
+            demo.create_dataset(key, data=arr, compression="gzip", compression_opts=2)
+        num = len(arrays[S.JOINT_POS_TARGETS])
+        demo.attrs.update({"num_samples": num, "seed": -1, "success": bool(success),
+                           **S.episode_attrs(fastener="", prompt=self._task, source="sim_data_collector",
+                                             env_id=0, reset_index=reset_index, num_envs=1)})
+        self.data.attrs["total"] = int(self.data.attrs["total"]) + num
         self.episode_idx += 1
 
-    def save(self):
-        """Write Parquet data and JSON metadata to disk."""
-        if not self.all_frames:
-            print("No frames to save.")
-            return
-
-        if pa is not None and pq is not None:
-            table = pa.Table.from_pylist(self.all_frames)
-            pq.write_table(table, self.output_dir / "data" / "train-00000-of-00001.parquet")
-
-        for ep in self.episodes:
-            ep_path = self.output_dir / "meta" / "episodes" / f"{ep['episode_index']:06d}.json"
-            with open(ep_path, "w") as f:
-                json.dump(ep, f, indent=2)
-
-        features = {
-            C.DATASET_STATE_KEY: {"dtype": "float32", "shape": [C.NUM_JOINTS], "names": list(C.JOINT_NAMES)},
-            # absolute joint-position targets (soarm_common.contract.ACTION_TYPE)
-            C.DATASET_ACTION_KEY: {"dtype": "float32", "shape": [C.ACTION_DIM], "names": list(C.JOINT_NAMES)},
-            C.DATASET_TASK_KEY: {"dtype": "string", "shape": [1]},
-        }
-        if self.use_camera:
-            for spec in C.CAMERAS:
-                features[spec.dataset_key] = {
-                    "dtype": "video",
-                    "shape": [spec.height, spec.width, 3],
-                    "video_info": {
-                        "video.fps": float(self.fps),
-                        "video.codec": "h264",
-                        "video.pix_fmt": "yuv420p",
-                        "has_audio": False,
-                    },
-                }
-
-        info = {
-            "codebase_version": "v3.0",
-            "robot_type": C.ROBOT_TYPE,
-            "fps": self.fps,
-            "action_type": C.ACTION_TYPE,
-            "soarm_contract_version": C.CONTRACT_VERSION,
-            "total_episodes": len(self.episodes),
-            "total_frames": self.global_frame_idx,
-            "features": features,
-        }
-        with open(self.output_dir / "meta" / "info.json", "w") as f:
-            json.dump(info, f, indent=2)
-
-        if self.all_frames:
-            states = np.array([f[C.DATASET_STATE_KEY] for f in self.all_frames], dtype=np.float32)
-            actions = np.array([f[C.DATASET_ACTION_KEY] for f in self.all_frames], dtype=np.float32)
-            stats = {
-                C.DATASET_STATE_KEY: {
-                    "mean": states.mean(axis=0).tolist(),
-                    "std": np.maximum(states.std(axis=0), 1e-6).tolist(),
-                    "min": states.min(axis=0).tolist(),
-                    "max": states.max(axis=0).tolist(),
-                },
-                C.DATASET_ACTION_KEY: {
-                    "mean": actions.mean(axis=0).tolist(),
-                    "std": np.maximum(actions.std(axis=0), 1e-6).tolist(),
-                    "min": actions.min(axis=0).tolist(),
-                    "max": actions.max(axis=0).tolist(),
-                },
-            }
-            with open(self.output_dir / "meta" / "stats.json", "w") as f:
-                json.dump(stats, f, indent=2)
-
-        print(f"Saved {len(self.episodes)} episodes, {self.global_frame_idx} frames "
-              f"to {self.output_dir}")
+    def close(self):
+        self.file.close()
+        print(f"Saved {self.episode_idx} episodes to {self.path}. Make a LeRobot dataset with "
+              f"training/scripts/hdf5_to_lerobot.py (docs/DATA_PIPELINE.md).", flush=True)
 
 
 def _setup_ik_controller(robot, device, command_type: str = "position"):
@@ -496,7 +384,8 @@ def collect_episodes(
             pass
 
     print("Collecting episodes with IK-based scripted policy...", flush=True)
-    writer = LeRobotWriter(output_dir, use_camera=use_camera)
+    writer = DemoHDF5Writer(os.path.join(output_dir, f"{env_type}.hdf5"),
+                            env_name="SoarmPickEnv" if env_type == "pick" else "SoarmReachEnv")
 
     successes = 0
     for ep in range(num_episodes):
@@ -585,7 +474,7 @@ def collect_episodes(
             for spec in C.CAMERAS if use_camera else ():
                 if spec.obs_key in obs:
                     img = obs[spec.obs_key][0].cpu().numpy()
-                    images[spec.dataset_key] = img[:, :, :3] if img.shape[-1] == 4 else img
+                    images[spec.obs_key] = img[:, :, :3] if img.shape[-1] == 4 else img
 
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated.any() or truncated.any()
@@ -596,12 +485,9 @@ def collect_episodes(
             writer.add_frame(
                 state=current_pos[0].cpu().numpy(),
                 action=env.joint_pos_target[0].cpu().numpy(),
-                language_instruction=lang,
                 images=images,
             )
             step += 1
-
-        writer.end_episode()
 
         # Success terminates the episode inside env.step (pick: cube within place_threshold
         # of the target), so a terminated episode means success.
@@ -612,11 +498,12 @@ def collect_episodes(
         else:
             reached = bool(terminated.any()) or ee_dist < cfg.success_threshold
             status = "REACHED" if reached else f"dist={ee_dist:.3f}m"
+        writer.end_episode(success=reached, reset_index=ep)
         successes += int(reached)
         print(f"Episode {ep + 1}/{num_episodes}: {step} steps  ({status})", flush=True)
 
     print(f"Success rate: {successes}/{num_episodes}", flush=True)
-    writer.save()
+    writer.close()
     env.close()
     sim_app.close()
 

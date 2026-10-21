@@ -116,7 +116,9 @@ load the SO-ARM101 from its USD asset and expose Gymnasium-compatible APIs:
 - **SoarmPickEnv** -- Grasp a cube and place it at a target.
 
 The `sim_data_collector.py` script runs a policy inside the environment,
-recording observations and actions into LeRobot v3.0 format.
+recording observations and actions into a demo HDF5 file, which
+`training/scripts/hdf5_to_lerobot.py` converts to a LeRobot v3.0 dataset
+(see [DATA_PIPELINE.md](DATA_PIPELINE.md)).
 
 ### 2. OpenPi Server
 
@@ -289,8 +291,9 @@ isaac-sim-soarm101/
 │   └── scripts/
 │       ├── compute_norm_stats.py
 │       ├── train_lora.py
-│       └── convert_sim_episodes.py
-├── data/episodes/ .................. LeRobot v3.0 dataset
+│       ├── hdf5_to_lerobot.py ...... demo HDF5 -> LeRobot v3.0
+│       └── validate_lerobot_dataset.py
+├── data/demos/, data/lerobot/ ...... demo HDF5, LeRobot v3.0 datasets
 ├── models/ ......................... Checkpoints + LoRA
 └── scripts/ ........................ Workflow shell scripts
 ```

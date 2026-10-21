@@ -62,6 +62,7 @@ check "VLA bridge node" test -f "$PROJECT_DIR/ros2_ws/src/soarm_vla_bridge/soarm
 check "Observation builder" test -f "$PROJECT_DIR/ros2_ws/src/soarm_vla_bridge/soarm_vla_bridge/observation_builder.py"
 check "SoARM training config" test -f "$PROJECT_DIR/training/configs/soarm_config.py"
 check "Norm stats script" test -f "$PROJECT_DIR/training/scripts/compute_norm_stats.py"
+check "HDF5 -> LeRobot converter" test -f "$PROJECT_DIR/training/scripts/hdf5_to_lerobot.py"
 check "Train LoRA script" test -f "$PROJECT_DIR/training/scripts/train_lora.py"
 
 # --- 2. Script permissions ---
@@ -90,60 +91,40 @@ check "URDF has 6 revolute joints" test "$(grep -c 'type="revolute"' "$PROJECT_D
 check "URDF references package:// meshes" grep -q 'package://soarm_description/meshes/' "$PROJECT_DIR/robot_description/urdf/soarm101.urdf"
 check "Isaac URDF references /robot_description/" grep -q '/robot_description/meshes/' "$PROJECT_DIR/robot_description/urdf/soarm101_isaacsim.urdf"
 
-# --- 5. Generate synthetic test data ---
+# --- 5. Synthetic episodes -> demo HDF5 -> LeRobot v3.0 dataset ---
 echo ""
-echo "5. Generating synthetic test episodes..."
-TEST_DATA_DIR=$(mktemp -d)
-python3 -c "
-import sys, json, os
-sys.path.insert(0, '$PROJECT_DIR/isaac_envs')
-from sim_data_collector import LeRobotWriter
+echo "5. Synthetic episodes -> HDF5 -> LeRobot dataset (in the soarm-lerobot image)..."
+LEROBOT_IMAGE="soarm-lerobot:${LEROBOT_VERSION:-0.6.1}"
+if docker image inspect "$LEROBOT_IMAGE" >/dev/null 2>&1; then
+    # sim_data_collector.DemoHDF5Writer -> hdf5_to_lerobot.py -> validate_lerobot_dataset.py
+    check "collector HDF5 converts to a valid LeRobot dataset" docker run --rm --entrypoint bash \
+        -e NVIDIA_VISIBLE_DEVICES=void \
+        -v "$PROJECT_DIR/isaac_envs:/isaac_envs:ro" -v "$PROJECT_DIR/training:/training:ro" \
+        "$LEROBOT_IMAGE" -c '
+set -e; cd /tmp
+python -c "
+import sys; sys.path.insert(0, \"/isaac_envs\")
 import numpy as np
+from sim_data_collector import DemoHDF5Writer
+w = DemoHDF5Writer(\"/tmp/syn/reach.hdf5\", env_name=\"SoarmReachEnv\")
+for ep in range(3):
+    w.start_episode(task=\"smoke_test_reach\")
+    for t in range(30):
+        img = np.full((224, 224, 3), 8 * t, np.uint8)
+        w.add_frame(state=np.random.randn(6), action=np.random.randn(6),
+                    images={\"wrist_rgb\": img, \"overhead_rgb\": 255 - img})
+    w.end_episode(success=True, reset_index=ep)
+w.close()
+"
+python /training/scripts/hdf5_to_lerobot.py /tmp/syn/reach.hdf5 --output-root /tmp/syn_lr >/dev/null 2>&1
+python /training/scripts/validate_lerobot_dataset.py /tmp/syn_lr --hdf5-dir /tmp/syn --expect-episodes 3 2>/dev/null'
+else
+    echo "  [SKIP] $LEROBOT_IMAGE not built (cd docker && docker compose --profile train-lerobot build lerobot)"
+fi
 
-writer = LeRobotWriter('$TEST_DATA_DIR', fps=30)
-for ep in range(5):
-    writer.start_episode(task='smoke_test_reach')
-    for step in range(30):
-        state = np.random.randn(6).astype(np.float32) * 0.5
-        action = np.random.randn(6).astype(np.float32) * 0.1
-        writer.add_frame(state=state, action=action)
-    writer.end_episode()
-writer.save()
-print('OK')
-" 2>&1 && {
-    check "5 episodes generated" test "$(ls "$TEST_DATA_DIR/meta/episodes/"*.json 2>/dev/null | wc -l)" -eq 5
-    if python3 -c "import pyarrow" 2>/dev/null; then
-        check "Parquet data file" test -f "$TEST_DATA_DIR/data/train-00000-of-00001.parquet"
-    else
-        echo "  [SKIP] Parquet data file (pyarrow not installed on host -- available in Docker)"
-    fi
-    check "info.json metadata" test -f "$TEST_DATA_DIR/meta/info.json"
-    check "stats.json normalization" test -f "$TEST_DATA_DIR/meta/stats.json"
-
-    # Validate info.json
-    check "info.json has v3.0" grep -q '"v3.0"' "$TEST_DATA_DIR/meta/info.json"
-    check "info.json has so_arm101" grep -q '"so_arm101"' "$TEST_DATA_DIR/meta/info.json"
-} || {
-    echo "  [FAIL] Synthetic data generation failed"
-    FAIL=$((FAIL + 1))
-}
-
-# --- 6. Compute norm stats on test data ---
+# --- 6. Python imports ---
 echo ""
-echo "6. Computing normalization statistics..."
-python3 "$PROJECT_DIR/training/scripts/compute_norm_stats.py" \
-    --data-dir "$TEST_DATA_DIR" 2>&1 && {
-    check "stats.json updated" test -f "$TEST_DATA_DIR/meta/stats.json"
-    check "Stats has observation.state" grep -q '"observation.state"' "$TEST_DATA_DIR/meta/stats.json"
-    check "Stats has action" grep -q '"action"' "$TEST_DATA_DIR/meta/stats.json"
-} || {
-    echo "  [FAIL] Norm stats computation failed"
-    FAIL=$((FAIL + 1))
-}
-
-# --- 7. Python imports ---
-echo ""
-echo "7. Checking Python imports..."
+echo "6. Checking Python imports..."
 check "observation_builder imports" python3 -c "
 import sys; sys.path.insert(0, '$PROJECT_DIR/ros2_ws/src/soarm_vla_bridge')
 from soarm_vla_bridge.observation_builder import build_observation, SOARM_JOINT_NAMES, IMAGE_SIZE
@@ -153,13 +134,10 @@ assert 'state' in obs and 'images' in obs
 "
 check "soarm_common contract imports without Isaac" python3 "$PROJECT_DIR/isaac_envs/soarm_common/contract.py"
 
-# --- 8. Tutorials ---
+# --- 7. Tutorials ---
 echo ""
-echo "8. Checking tutorials (scripts compile, links, snippets)..."
+echo "7. Checking tutorials (scripts compile, links, snippets)..."
 check "check_tutorials.sh passes" "$SCRIPT_DIR/check_tutorials.sh"
-
-# Cleanup
-rm -rf "$TEST_DATA_DIR"
 
 # --- Summary ---
 echo ""
