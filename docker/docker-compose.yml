@@ -34,6 +34,7 @@ services:
     volumes:
       - ../robot_description:/robot_description:ro
       - ../isaac_envs:/isaac_envs:ro
+      - ../tutorials:/tutorials:ro   # tutorial scripts (docs/tutorials/)
       - ../data:/data:rw
       - ../.cursor:/.cursor:rw
       - vla_signals:/tmp/vla_signals
