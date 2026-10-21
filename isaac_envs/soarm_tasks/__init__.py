@@ -5,6 +5,10 @@ Importing this package registers (configs are only built when an env is made):
 * ``Soarm-PickPlace-Fastener-JointAbs-v0``  absolute joint targets (the contract action), cameras
 * ``Soarm-PickPlace-Fastener-IK-Abs-v0``    absolute EE pose + gripper target, cameras
 * ``Soarm-PickPlace-Fastener-State-v0``     absolute joint targets, no cameras, flat state obs
+* ``Soarm-PickPlace-Fastener-IK-Rel-v0``    delta EE pose + gripper +-1 (keyboard/SpaceMouse teleop)
+
+The camera tasks also name a demo recorder (``demo_recorder_cfg_entry_point``), which
+``record_demos.py`` uses instead of its default: see ``soarm_tasks.recorders``.
 
 How it gets imported
 --------------------
@@ -32,15 +36,25 @@ TASK_IDS = {
     "Soarm-PickPlace-Fastener-JointAbs-v0": "pick_place_env_cfg:FastenerPickPlaceJointAbsEnvCfg",
     "Soarm-PickPlace-Fastener-IK-Abs-v0": "pick_place_env_cfg:FastenerPickPlaceIKAbsEnvCfg",
     "Soarm-PickPlace-Fastener-State-v0": "pick_place_env_cfg:FastenerPickPlaceStateEnvCfg",
+    "Soarm-PickPlace-Fastener-IK-Rel-v0": "pick_place_env_cfg:FastenerPickPlaceIKRelEnvCfg",
+}
+# Recorder cfg used by Isaac Lab's record_demos.py (scripts/generate_demos.py sets its own).
+DEMO_RECORDERS = {
+    "Soarm-PickPlace-Fastener-JointAbs-v0": "recorders:DemoRecorderManagerCfg",
+    "Soarm-PickPlace-Fastener-IK-Abs-v0": "recorders:DemoRecorderManagerCfg",
+    "Soarm-PickPlace-Fastener-IK-Rel-v0": "recorders:TeleopDemoRecorderManagerCfg",
 }
 
 # [start:register]
 for _task_id, _cfg in TASK_IDS.items() if gym is not None else ():
     if _task_id not in gym.registry:
+        _kwargs = {"env_cfg_entry_point": f"{__name__}.{_cfg}"}
+        if _task_id in DEMO_RECORDERS:
+            _kwargs["demo_recorder_cfg_entry_point"] = f"{__name__}.{DEMO_RECORDERS[_task_id]}"
         gym.register(
             id=_task_id,
             entry_point="isaaclab.envs:ManagerBasedRLEnv",
-            kwargs={"env_cfg_entry_point": f"{__name__}.{_cfg}"},
+            kwargs=_kwargs,
             disable_env_checker=True,
         )
 # [end:register]

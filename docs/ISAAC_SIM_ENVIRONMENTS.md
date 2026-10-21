@@ -198,6 +198,7 @@ asset, so no Newton/PhysX variant selection is involved.
 | `Soarm-PickPlace-Fastener-JointAbs-v0` | 6: absolute joint targets in contract order (the contract action) | wrist + overhead |
 | `Soarm-PickPlace-Fastener-IK-Abs-v0` | 8: `gripper_frame_link` pose in the base frame (pos, quat xyzw), then the gripper joint target (rad) | wrist + overhead |
 | `Soarm-PickPlace-Fastener-State-v0` | 6: absolute joint targets | none; `policy` obs concatenated (RL) |
+| `Soarm-PickPlace-Fastener-IK-Rel-v0` | 7: delta EE pose `[dx, dy, dz, rx, ry, rz]` + gripper ±1 (keyboard / SpaceMouse teleop, issue #33) | wrist + overhead |
 
 **Importing.** `isaac_envs/` is mounted at `/isaac_envs` and isn't pip-installed. Put it on
 `sys.path` and `import soarm_tasks` before `gym.make`. Isaac Lab's own scripts only import
@@ -313,6 +314,77 @@ throughput. Without cameras it's the per-step overhead (equal for 1 and 16 envs)
 it's RTX rendering: the render interval is 2 physics steps, so there are 2 renders per control
 step. "GPU memory used" is the GPU's total used memory as `nvidia-smi` reports it; nothing else
 was running.
+
+### Demonstrations (issue #33)
+
+Two sources write the same HDF5 layout: Isaac Lab's `HDF5DatasetFileHandler` format, which
+`replay_demos.py` and Mimic read. The layout is documented in `soarm_tasks/demo_schema.py`. Every
+`demo_<k>` holds:
+- `actions`, as sent to `env.step`.
+- `ee_pose_actions` (T, 8): the executed EE target plus the gripper target.
+- `joint_pos_targets` (T, 6): the applied joint targets. This is the contract / LeRobot action.
+- Joint state and both camera images (`obs/wrist_rgb`, `obs/overhead_rgb`, uint8 224²).
+- `initial_state` / `states`.
+- The attributes `seed`, `fastener`, `prompt` and `source`.
+
+The recorder is `soarm_tasks.recorders.DemoRecorderManagerCfg`.
+
+**Scripted demos** (`soarm_tasks/scripts/generate_demos.py`) run the batched scripted expert on
+IK-Abs and keep an episode once `success` has held for 10 steps. The script writes its own
+schema check into `--json`.
+
+```bash
+# in the isaac-sim container (docker compose --profile collect run --rm isaac-sim ...)
+/isaac-sim/python.sh /isaac_envs/soarm_tasks/scripts/generate_demos.py \
+    --num_demos 50 --num_envs 4 --seed 0 --dataset_file /data/demos/fastener_m6/scripted.hdf5
+```
+
+**Teleop demos** use `Soarm-PickPlace-Fastener-IK-Rel-v0` with Isaac Lab's unmodified
+`record_demos.py`. The key bindings and SpaceMouse buttons are in the `soarm_tasks/teleop.py`
+docstring:
+- Keys: W/S x, A/D y, Q/E z, C/V yaw, K gripper, R reset.
+- A held key moves the EE target 3 mm per step (9 cm/s).
+- After each reset the arm first moves itself to a ready pose above the spawn area. Wait about
+  2 s before steering.
+
+```bash
+./scripts/sunshine.sh up    # once; watch and type through Moonlight
+./scripts/isaac.sh --gui /isaac-sim/python.sh /isaac_envs/soarm_tasks/scripts/with_soarm_tasks.py \
+    /workspace/isaaclab/scripts/tools/record_demos.py --viz kit \
+    --task Soarm-PickPlace-Fastener-IK-Rel-v0 --teleop_device keyboard \
+    --dataset_file /data/demos/fastener_m6/teleop.hdf5 --num_demos 5
+```
+
+`soarm_tasks/scripts/teleop_selftest.py` runs the same path headless. A scripted "person" holds
+and taps keys through `Se3Keyboard`'s Kit key callback, so it needs no window. Isaac Lab 3.0
+scripts run headless unless a Kit visualizer is selected, and they do not accept `--headless`.
+
+**Checking and replaying.** `demo_tools.py` (no GPU) has three commands:
+- `info` and `validate` (schema check).
+- `swap`, which copies a file with `ee_pose_actions` or `joint_pos_targets` as `actions`. This
+  lets any demo replay on the IK-Abs or JointAbs task.
+
+```bash
+P=/isaac-sim/python.sh; S=/isaac_envs/soarm_tasks/scripts; D=/data/demos/fastener_m6
+$P $S/demo_tools.py validate $D/scripted.hdf5
+$P $S/demo_tools.py swap $D/scripted.hdf5 $D/scripted_joint.hdf5 \
+    --actions joint_pos_targets --task Soarm-PickPlace-Fastener-JointAbs-v0
+$P $S/with_soarm_tasks.py /workspace/isaaclab/scripts/tools/replay_demos.py \
+    --task Soarm-PickPlace-Fastener-JointAbs-v0 --dataset_file $D/scripted_joint.hdf5 \
+    --num_envs 4 --validate_success_rate
+```
+
+| Run (M6x20, RTX A2000) | Result |
+|---|---|
+| `generate_demos.py`, 4 envs, cameras, seed 0 | **50/50** written, 0 failed, 415 s (28.5 env-steps/s), 817 MB, 11 380 steps, schema OK |
+| Replay of those 50 on IK-Abs (`actions` = EE targets) | **50/50** successful |
+| Replay as joint targets on JointAbs (`swap`) | **50/50** successful |
+| `teleop_selftest.py`, 1 demo (keyboard path, IK-Rel) | **1/1** recorded, 421 steps, 30 MB, schema OK |
+| Replay of that demo on IK-Rel / IK-Abs (`swap ee_pose_actions`) / JointAbs (`swap joint_pos_targets`) | **1/1** on each |
+
+The IK holds the EE about 11 mm from the ready-pose target. The self-test therefore
+starts steering once the EE is within 1 cm of the target, or after 150 steps (5 s), whichever
+comes first.
 
 ---
 
