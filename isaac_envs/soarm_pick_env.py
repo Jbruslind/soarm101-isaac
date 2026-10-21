@@ -18,6 +18,7 @@ from isaaclab_physx.sim.schemas import PhysxCollisionPropertiesCfg, PhysxRigidBo
 from isaaclab_physx.sim.spawners.materials import PhysxRigidBodyMaterialCfg
 
 from soarm_common import contract as C
+from soarm_common.robot import use_convex_decomposition_for_jaws
 from soarm_reach_env import IDENTITY_QUAT, SoarmReachEnv, SoarmReachEnvCfg
 
 
@@ -99,34 +100,9 @@ class SoarmPickEnv(SoarmReachEnv):
 
     @staticmethod
     def _use_convex_decomposition_for_jaws():
-        """Collide the gripper jaws as convex decompositions instead of convex hulls.
-
-        The URDF import gives every mesh a single convex hull; the hulls of the curved jaws
-        fill the space between them, so a closing gripper squeezes the cube out or traps it
-        in the hull instead of holding it. The collision meshes are instanced, so their
-        instanceable ancestors are de-instanced (on this stage only) first. Links are found
-        by name, so this doesn't depend on the USD layout.
-        """
-        import omni.usd
-        from pxr import Usd, UsdPhysics
-
-        stage = omni.usd.get_context().get_stage()
-        meshes, instances = [], set()
-        for prim in Usd.PrimRange(stage.GetPrimAtPath(f"{C.ENV0_PATH}/Robot"), Usd.TraverseInstanceProxies()):
-            if prim.GetName() not in ("gripper_link", "moving_jaw_so101_v1_link"):
-                continue
-            for mesh in Usd.PrimRange(prim, Usd.TraverseInstanceProxies()):
-                if mesh.HasAPI(UsdPhysics.MeshCollisionAPI):
-                    meshes.append(mesh.GetPath())
-                    parent = mesh
-                    while parent.IsInstanceProxy() or parent.IsInstance():
-                        if parent.IsInstance():
-                            instances.add(parent.GetPath())
-                        parent = parent.GetParent()
-        for path in instances:
-            stage.GetPrimAtPath(path).SetInstanceable(False)
-        for path in meshes:
-            UsdPhysics.MeshCollisionAPI(stage.GetPrimAtPath(path)).GetApproximationAttr().Set("convexDecomposition")
+        """Collide the gripper jaws as convex decompositions (see
+        :func:`soarm_common.robot.use_convex_decomposition_for_jaws`)."""
+        use_convex_decomposition_for_jaws(f"{C.ENV0_PATH}/Robot")
 
     def _get_observations(self) -> dict:
         # Reuse the reach observations (camera images included) and insert the cube position.
