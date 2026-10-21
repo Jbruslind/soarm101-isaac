@@ -363,4 +363,4 @@ General problems (Kit start, carb shared memory, Moonlight black screen) are in
 
 You now have demos that replay: 50 scripted and 5 of your own. Next, turn them into a LeRobot
 dataset and fine-tune a policy on it.
-Next: F6: Fine-tune ACT / SmolVLA (coming with #34/#35). Back to the [tutorial index](../README.md).
+Next: [F6: Fine-tune ACT and SmolVLA](F6_finetune.md). Back to the [tutorial index](../README.md).

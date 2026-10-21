@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Collect simulation episodes from Isaac Sim 6.2 and save in LeRobot v3.0 format.
+# Collect simulation episodes from Isaac Sim 6.2 into a demo HDF5 file (data/episodes/<env>.hdf5).
+# Convert it to a LeRobot v3.0 dataset with training/scripts/hdf5_to_lerobot.py (docs/DATA_PIPELINE.md).
 # Uses an IK-based scripted policy to generate smooth demonstrations.
 #
 # Usage:
@@ -9,10 +10,8 @@
 #   ./scripts/collect_sim_data.sh --watch --public-ip 192.168.1.50
 #   ./scripts/collect_sim_data.sh --gui                     # watch via Sunshine/Moonlight
 #
-# Cameras are ON by default (required for VLA training).  Each episode
-# produces two MP4 files in data/episodes/videos/:
-#   - observation.images.wrist_episode_000000.mp4
-#   - observation.images.overhead_episode_000000.mp4
+# Cameras are ON by default (required for VLA training and for the LeRobot conversion).
+# Each episode stores the wrist and overhead images (obs/wrist_rgb, obs/overhead_rgb).
 # (camera poses and keys: isaac_envs/soarm_common/contract.py, docs/CONFIG_ALIGNMENT.md)
 #
 # Use --watch to enable WebRTC streaming so you can see the robot move in
@@ -112,8 +111,5 @@ docker compose --profile collect run --rm \
         $NO_CAMERA \
         $WAIT_FOR_KEY
 
-echo "=== Done. Episodes saved to data/episodes/ ==="
-if [[ -z "$NO_CAMERA" ]]; then
-    echo "Videos (wrist + overhead): data/episodes/videos/"
-fi
-echo "Next: ./scripts/train.sh"
+echo "=== Done. Episodes saved to data/episodes/$ENV_TYPE.hdf5 ==="
+echo "Next: convert to a LeRobot dataset with training/scripts/hdf5_to_lerobot.py (docs/DATA_PIPELINE.md)"
