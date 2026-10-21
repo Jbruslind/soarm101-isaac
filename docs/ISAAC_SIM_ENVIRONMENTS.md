@@ -14,6 +14,7 @@ inside the Isaac Sim physics engine.
 |---|---|---|---|
 | **SoarmReachEnv** | `isaac_envs/soarm_reach_env.py` | Move EE to target | 5 s |
 | **SoarmPickEnv** | `isaac_envs/soarm_pick_env.py` | Pick cube, place at target | 10 s |
+| **Soarm-PickPlace-Fastener-\*-v0** (manager-based) | `isaac_envs/soarm_tasks/` | Pick a fastener, place it in a bin | 20 s |
 
 ---
 
@@ -182,6 +183,139 @@ sim-to-real fidelity matters:
 
 ---
 
+## Fastener pick-and-place tasks (manager-based, `isaac_envs/soarm_tasks/`)
+
+Gym-registered Isaac Lab tasks for the fastener tutorials (issue #32). Teleop/`record_demos.py`,
+Mimic, multi-env data generation and evaluation build on them. They are modelled on Isaac Lab's
+`contrib/stack/config/so101` cube-stack task. They use the same PhysX scene settings
+(`soarm_common.robot.make_physx_cfg`, incl. `solve_articulation_contact_last`), its
+`SO101PoseIKActionCfg` for the IK variant, and its observation groups (`policy`,
+`subtask_terms`). The robot is our importer-3.0 USD (`soarm_common`), not the Isaac Lab SysID
+asset, so no Newton/PhysX variant selection is involved.
+
+| Task id | Action | Cameras |
+|---|---|---|
+| `Soarm-PickPlace-Fastener-JointAbs-v0` | 6: absolute joint targets in contract order (the contract action) | wrist + overhead |
+| `Soarm-PickPlace-Fastener-IK-Abs-v0` | 8: `gripper_frame_link` pose in the base frame (pos, quat xyzw), then the gripper joint target (rad) | wrist + overhead |
+| `Soarm-PickPlace-Fastener-State-v0` | 6: absolute joint targets | none; `policy` obs concatenated (RL) |
+
+**Importing.** `isaac_envs/` is mounted at `/isaac_envs` and isn't pip-installed. Put it on
+`sys.path` and `import soarm_tasks` before `gym.make`. Isaac Lab's own scripts only import
+`isaaclab_tasks`, so run them through the wrapper:
+
+```bash
+# registry listing (no simulator)
+/isaac-sim/python.sh /isaac_envs/soarm_tasks/scripts/list_tasks.py
+# any Isaac Lab script with the Soarm tasks registered
+/isaac-sim/python.sh /isaac_envs/soarm_tasks/scripts/with_soarm_tasks.py \
+    /workspace/isaaclab/scripts/environments/list_envs.py --keyword Soarm
+```
+
+**Scene** (`pick_place_env_cfg.FastenerSceneCfg`, geometry in `work_cell.py`): the robot stands on
+a 1 x 1 m static table whose top is z = 0. There is one open-top bin (9 x 9 cm inside, 2.5 cm walls, five static
+boxes from `spawners.BinCfg`) at (0.20, 0.14), and the fastener (default ISO 4017 M6x20). Each env
+gets the contract's wrist and overhead cameras (`isaaclab.sensors.CameraCfg`; Isaac Lab 3.0's
+`Camera` renders tiled, and `TiledCameraCfg` is a deprecated alias), plus the dome light of
+`soarm_common.scene`. All per-env prim paths use `{ENV_REGEX_NS}` (= `/World/envs/env_[^/]+`).
+`replicate_physics=False`, so for Part 2 `cfg.fastener_names = (...)` turns the fastener into a
+`MultiAssetSpawnerCfg` mix (one fastener per env), and more bins are added with
+`make_bin_cfg(BinSpec(...))`, one field per bin.
+
+**Fastener collision.** The fastener colliders come from `assets/fasteners.py` (issue #30), not
+the visual mesh. The threads are visual only: the shank is a smooth 16-gon convex prism at the
+major diameter d and the head is a hexagonal prism. Contact offset 1 mm, rest offset 0, 16/1
+solver iterations. This matches the Isaac Lab Factory/NIST recipe (smooth shank, small contact
+offset). The table and bin use a 2 mm contact offset. We didn't need a different collider for the
+grasp. The jaws use convex decomposition (`soarm_common.robot.use_convex_decomposition_for_jaws`,
+run by the `prestartup` event).
+
+**Terms** (`soarm_tasks/mdp/`):
+- Subtasks (`subtask_terms` group, also for Mimic):
+  - `grasped`: fastener within 3 cm of the EE, and the gripper between -0.12 rad (shut on
+    nothing) and 0.5 rad.
+  - `lifted`: fastener > 3 cm above the table.
+  - `in_bin`: fastener origin inside the bin's inner box and below the wall top + 1 cm.
+- `success` termination: in the bin, slower than 5 cm/s and released (gripper > 0.5 rad).
+- Other terminations: `fastener_dropped` (z < -5 cm) and `time_out` (20 s).
+- Observations (`policy`): absolute joint positions/velocities, EE pose, gripper angle,
+  fastener pose, bin position and last action, all in the base frame. `images` holds
+  `wrist_rgb` and `overhead_rgb` (uint8 224², contract obs keys).
+
+**Language.** `cfg.language_instruction` is built from the fastener name:
+`"pick up the M6 hex bolt and place it in the bin"` (`soarm_tasks/language.py`). For a mix,
+`soarm_tasks.mdp.language_instructions(env)` returns one prompt per env. It reads the
+`fastener:type/size/lengthMm` attributes of each spawned USD.
+
+**Domain randomization** (`FastenerEventCfg`; ranges in one place, `soarm_tasks/randomization.py`,
+kept modest for Part 1):
+
+| Event | Mode | Range |
+|---|---|---|
+| Fastener pose | reset | x 0.15-0.25 m, y -0.12 to -0.02 m, lying on its side, axis yaw ±180°, spin about its axis ±180° |
+| Robot joints | reset | arm joints ±0.05 rad around 0 |
+| Fastener friction | startup | static 0.45-0.60, dynamic 0.35-0.50 (16 buckets) |
+| Fastener mass | startup | x 0.9-1.1 |
+| Dome light | reset | intensity 1500-2500, tint ±0.05 per channel |
+
+Camera-mount jitter (±3 mm / ±3°) and actuator/encoder-bias randomization are planned. Their
+target ranges are in `randomization.py`, and they go at the end of `FastenerEventCfg`.
+
+### Scripted IK expert
+
+`soarm_tasks/expert.py` (`FastenerPickExpert`) drives the IK-Abs task for any number of envs.
+It uses the `ScriptedPick` state machine: settle → hover → descend → close → lift → carry →
+lower → release → retreat.
+
+- The gripper points straight down and the wrist turns so that the jaws close across the bolt
+  axis. Of the two directions across the axis, it uses the one nearer to `ScriptedPick`'s
+  default yaw, solved at the goal position.
+- It grasps the shank 8 mm from the head's bearing face (the centre of mass is 4.9 mm from that
+  face).
+- The EE height for the grasp is 7 mm, and the gripper goal is -0.15 rad. The jaw stalls on the
+  6 mm shank at about -0.11 rad, at the 3.35 N m effort limit.
+- Over the bin, it releases from an EE height of 6 cm.
+
+Run it with `soarm_tasks/scripts/scripted_eval.py`. The script is seeded and prints success with a
+95 % Wilson interval and the rates of `grasped`, `lifted` and `in_bin`. Every env contributes the
+same number of episodes, so quick successes aren't over-counted. `--set key=value` overrides
+`ExpertParams`.
+
+| Run (IK-Abs, M6x20) | Result |
+|---|---|
+| 1 env, cameras, seed 0, 20 episodes | **20/20** (Wilson 84-100 %), 11 env-steps/s |
+| 16 envs, no cameras, seed 3, 128 episodes | **128/128** (97-100 %), 343 env-steps/s |
+| 16 envs, cameras, seed 4, 64 episodes | **63/64** (92-100 %), 102 env-steps/s; the miss closed on nothing (jaw at -0.148) |
+
+What we tried (16 envs × 64 episodes, seed 2, no cameras, unless noted):
+
+| Change | Placed | Notes |
+|---|---|---|
+| EE speed 1 cm/step (ScriptedPick's) | 55/64 (86 %) | 7 of 9 failures: the bolt slipped out of the jaws during carry |
+| Grasp 5 mm from bearing face (nearer the CoM) | 46/64 (72 %) | jaws catch the head's edge (jaw stalls at -0.05 rad) |
+| Grasp height 5 mm | 53/64 (83 %) | no better than 7 mm |
+| 0.6 cm/step only while holding | 123/128 (96 %, seed 3) | |
+| **0.6 cm/step throughout** (default) | 62/64; 127/128 (seed 3) | adopted; successful episodes take 210-226 steps (~7.3 s) |
+
+### Throughput and VRAM (RTX A2000 12 GB, `soarm_tasks/scripts/smoke.py`, 300 steps holding the reset pose)
+
+| Task | Envs | Cameras | Steps/s | Env-steps/s | GPU memory used (peak) |
+|---|---|---|---|---|---|
+| JointAbs | 1 | no | 55 | 55 | 1.5 GB |
+| JointAbs | 1 | yes | 15 | 15 | 2.75 GB |
+| JointAbs | 16 | no | 55 | 873 | 1.5 GB |
+| JointAbs | 16 | yes | 9.1 | 145 | 3.2 GB |
+| IK-Abs | 1 | yes | 12 | 12 | 2.8 GB |
+| IK-Abs | 16 | yes | 7.6 | 122 | 3.4 GB |
+| State | 1 / 16 | no | 55 | 55 / 881 | 1.5 GB |
+
+Resets work for 1 and 16 envs, and the env builds in about 9 s. Two things limit the
+throughput. Without cameras it's the per-step overhead (equal for 1 and 16 envs). With cameras
+it's RTX rendering: the render interval is 2 physics steps, so there are 2 renders per control
+step. "GPU memory used" is the GPU's total used memory as `nvidia-smi` reports it; nothing else
+was running.
+
+---
+
 ## Simulation Parameters
 
 | Parameter | Value |
@@ -209,7 +343,7 @@ the observation dict as `wrist_rgb` / `overhead_rgb`.
 | Sampling | 30 Hz (one image per control step) |
 | Intrinsics | focal_length 1.93 mm, horizontal aperture 2.65 mm (69 deg horizontal FOV), near clip 1 cm |
 | Wrist mount | under `gripper_frame_link` at (0.02, 0.04, -0.07) m: beside the gripper, 7 cm back from the tips, aimed between the jaws |
-| Overhead | world (0.45, 0.40, 0.30) m looking at (0.19, 0, 0.03) |
+| Overhead | world (0.35, 0.035, 0.26) m looking at (0.20, 0.035, 0), i.e. in front of the robot, 60 deg up (contract v2, issue #32) |
 
 See docs/CONFIG_ALIGNMENT.md for the full camera / key / control-rate contract.
 

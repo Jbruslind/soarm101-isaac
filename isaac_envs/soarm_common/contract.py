@@ -32,7 +32,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2  # 2: overhead camera retuned for the fastener work cell (issue #32)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Robot
@@ -222,11 +222,20 @@ WRIST_CAMERA = CameraSpec(
     ros_topic="/camera/wrist/image_raw",
 )
 
-# Overhead camera: elevated three-quarter view of the table area in front of the robot, close
-# enough that a 3 cm object is visible at 224 px. (Named "overhead" for the ROS topic and the
-# cam_overhead policy key, which the bridge and dashboards already use.)
-_OVERHEAD_EYE = (0.45, 0.40, 0.30)
-_OVERHEAD_TARGET = (0.19, 0.0, 0.03)
+# Overhead camera: in front of the robot, 60 deg above the table, 0.30 m from the centre of the
+# fastener work cell (soarm_tasks.work_cell: spawn area x 0.15..0.25, y -0.12..-0.02, bin at
+# y = 0.14), looking back at the robot (image up = towards the base). The view is about 0.41 m
+# wide at the cell, enough for the spawn area, the bin and the cube pick area of SoarmPickEnv.
+# Close enough that an M6x20 bolt (24 mm) is ~10-15 px long in the 224 px image; from the earlier
+# three-quarter view at (0.45, 0.40, 0.30) it was 3-6 px (GitHub issue #32). (Named "overhead"
+# for the ROS topic and the cam_overhead policy key, which the bridge and dashboards already use.)
+_OVERHEAD_TARGET = (0.20, 0.035, 0.0)
+_OVERHEAD_DIST, _OVERHEAD_ELEV = 0.30, math.radians(60.0)
+_OVERHEAD_EYE = (
+    round(_OVERHEAD_TARGET[0] + _OVERHEAD_DIST * math.cos(_OVERHEAD_ELEV), 4),
+    _OVERHEAD_TARGET[1],
+    round(_OVERHEAD_DIST * math.sin(_OVERHEAD_ELEV), 4),
+)
 OVERHEAD_CAMERA = CameraSpec(
     name="overhead",
     parent="world",
