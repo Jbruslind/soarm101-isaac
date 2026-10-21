@@ -26,6 +26,9 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser(description="Interactive VLA inference test")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
+# Isaac Lab 3.0 only opens a window for a Kit visualizer (livestream adds one itself).
+if os.environ.get("HEADLESS") == "0" and not args.visualizer:
+    args.visualizer = "kit"
 
 app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
@@ -59,6 +62,11 @@ from isaaclab.assets import ArticulationCfg, Articulation
 from isaaclab.sensors import CameraCfg, Camera
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
+from isaaclab_physx.sim.schemas import (
+    PhysxArticulationRootPropertiesCfg,
+    PhysxCollisionPropertiesCfg,
+    PhysxRigidBodyPropertiesCfg,
+)
 
 # ---------------------------------------------------------------------------
 # Constants (matching soarm_reach_env.py)
@@ -214,7 +222,8 @@ def _euler_xyz_to_quat_wxyz(rx_deg: float, ry_deg: float, rz_deg: float) -> tupl
     """Convert Euler angles (X, Y, Z) in degrees to quaternion (w, x, y, z).
 
     Uses intrinsic XYZ order: rotate about X, then Y, then Z. Result is normalized.
-    Isaac Lab OffsetCfg expects (w, x, y, z); world convention uses +X forward, +Z up.
+    (w, x, y, z) is USD's Gf.Quatd order; Isaac Lab 3.0 OffsetCfg takes (x, y, z, w),
+    so pass the result through _wxyz_to_xyzw() for Isaac Lab.
     Implemented via quaternion multiplication (q = qz * qy * qx) to avoid sign/order bugs.
     """
     rx = math.radians(rx_deg)
@@ -250,6 +259,11 @@ def _euler_xyz_to_quat_wxyz(rx_deg: float, ry_deg: float, rz_deg: float) -> tupl
     return (q[0] / n, q[1] / n, q[2] / n, q[3] / n)
 
 
+def _wxyz_to_xyzw(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Reorder a (w, x, y, z) quaternion to Isaac Lab 3.0's (x, y, z, w)."""
+    return (q[1], q[2], q[3], q[0])
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Scene Setup
 # ═══════════════════════════════════════════════════════════════════════════
@@ -270,11 +284,11 @@ def _setup_scene(sim: SimulationContext):
         prim_path=ROBOT_PRIM_PATH,
         spawn=sim_utils.UsdFileCfg(
             usd_path=ROBOT_USD_PATH,
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            rigid_props=PhysxRigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
             ),
-            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            articulation_props=PhysxArticulationRootPropertiesCfg(
                 enabled_self_collisions=True,
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=0,
@@ -286,15 +300,15 @@ def _setup_scene(sim: SimulationContext):
         actuators={
             "arm": ImplicitActuatorCfg(
                 joint_names_expr=SOARM_JOINT_NAMES[:5],
-                velocity_limit_sim=2.0,
-                effort_limit_sim=30.0,
+                joint_velocity_limit=2.0,
+                joint_effort_limit=30.0,
                 stiffness=80.0,
                 damping=4.0,
             ),
             "gripper": ImplicitActuatorCfg(
                 joint_names_expr=["gripper"],
-                velocity_limit_sim=2.0,
-                effort_limit_sim=10.0,
+                joint_velocity_limit=2.0,
+                joint_effort_limit=10.0,
                 stiffness=80.0,
                 damping=4.0,
             ),
@@ -360,8 +374,8 @@ def _setup_scene(sim: SimulationContext):
     # -- Ground plane --
     ground_cfg = sim_utils.CuboidCfg(
         size=(100.0, 100.0, 0.02),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
+        rigid_props=PhysxRigidBodyPropertiesCfg(kinematic_enabled=True),
+        collision_props=PhysxCollisionPropertiesCfg(),
         visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.3, 0.3)),
     )
     ground_cfg.func("/World/ground", ground_cfg, translation=(0.0, 0.0, -0.01))
@@ -389,7 +403,7 @@ def _setup_scene(sim: SimulationContext):
         spawn=sim_utils.PinholeCameraCfg(focal_length=1.93, horizontal_aperture=2.65),
         offset=CameraCfg.OffsetCfg(
             pos=(-0.03, 0.05, -0.09),
-            rot=(-0.275637, 0.0, 0.961262, 0.0),  # Euler (-180, -32, -180) deg (x,y,z)
+            rot=(0.0, 0.961262, 0.0, -0.275637),  # (x, y, z, w); Euler (-180, -32, -180) deg (x,y,z)
             convention="world",
         ),
     ))
@@ -412,7 +426,7 @@ def _setup_scene(sim: SimulationContext):
         spawn=sim_utils.PinholeCameraCfg(focal_length=1.93, horizontal_aperture=2.65),
         offset=CameraCfg.OffsetCfg(
             pos=(0.1, 0.0, 0.8),
-            rot=_overhead_quat,
+            rot=_wxyz_to_xyzw(_overhead_quat),
             convention="world",
         ),
     ))
@@ -674,9 +688,9 @@ def spawn_object(obj_type: str, size: float, pos: tuple, color: tuple):
     _spawn_counter += 1
     prim_path = f"/World/SpawnedObjects/obj_{_spawn_counter:03d}"
 
-    common_rigid = sim_utils.RigidBodyPropertiesCfg(max_depenetration_velocity=1.0)
+    common_rigid = PhysxRigidBodyPropertiesCfg(max_depenetration_velocity=1.0)
     common_mass = sim_utils.MassPropertiesCfg(mass=0.05)
-    common_collision = sim_utils.CollisionPropertiesCfg()
+    common_collision = PhysxCollisionPropertiesCfg()
     common_visual = sim_utils.PreviewSurfaceCfg(diffuse_color=color)
 
     if obj_type == "Cube":
@@ -821,8 +835,8 @@ def publish_joint_states(robot: Articulation, ros2_node):
         msg = JointStateMsg()
         msg.header.stamp = ros2_node.get_clock().now().to_msg()
         msg.name = list(SOARM_JOINT_NAMES)
-        msg.position = robot.data.joint_pos[0, :NUM_JOINTS].cpu().tolist()
-        msg.velocity = robot.data.joint_vel[0, :NUM_JOINTS].cpu().tolist()
+        msg.position = robot.data.joint_pos.torch[0, :NUM_JOINTS].cpu().tolist()
+        msg.velocity = robot.data.joint_vel.torch[0, :NUM_JOINTS].cpu().tolist()
         _ros2_pub_joint_states.publish(msg)
     except Exception:
         pass
@@ -897,8 +911,8 @@ class InteractiveControlPanel:
         # Hold current joint positions
         if self._robot is not None and self._robot.is_initialized:
             try:
-                current = self._robot.data.joint_pos
-                self._robot.set_joint_position_target(current)
+                current = self._robot.data.joint_pos.torch.clone()
+                self._robot.actuators.target_command.set_position_index(value=current)
             except Exception:
                 pass
 
@@ -911,10 +925,10 @@ class InteractiveControlPanel:
 
         if self._robot is not None and self._robot.is_initialized:
             try:
-                current = self._robot.data.joint_pos
-                self._robot.set_joint_position_target(current)
-                zeros = torch.zeros_like(self._robot.data.joint_vel)
-                self._robot.write_joint_state_to_sim(current, zeros)
+                current = self._robot.data.joint_pos.torch.clone()
+                self._robot.actuators.target_command.set_position_index(value=current)
+                zeros = torch.zeros_like(current)
+                self._robot.write_joint_state_to_sim_index(position=current, velocity=zeros)
             except Exception:
                 pass
 
@@ -930,8 +944,8 @@ class InteractiveControlPanel:
             try:
                 home = torch.zeros(1, NUM_JOINTS, device=self._robot.device)
                 zeros = torch.zeros(1, NUM_JOINTS, device=self._robot.device)
-                self._robot.write_joint_state_to_sim(home, zeros)
-                self._robot.set_joint_position_target(home)
+                self._robot.write_joint_state_to_sim_index(position=home, velocity=zeros)
+                self._robot.actuators.target_command.set_position_index(value=home)
                 # Also overwrite any stale ROS-side command target held by sub_joint_cmd.
                 publish_joint_command_reset([0.0] * NUM_JOINTS)
             except Exception:
@@ -966,13 +980,13 @@ class InteractiveControlPanel:
         # Telemetry
         if self._robot is not None and self._robot.is_initialized:
             try:
-                jpos = self._robot.data.joint_pos[0].cpu().numpy()
+                jpos = self._robot.data.joint_pos.torch[0].cpu().numpy()
                 for i, name in enumerate(SOARM_JOINT_NAMES):
                     if i < len(self._joint_labels):
                         self._joint_labels[i].text = f"  {name}: {jpos[i]:+.3f} rad"
 
                 ee_idx = self._robot.find_bodies(EE_BODY_NAME)[0][0]
-                ee_pos = self._robot.data.body_pos_w[0, ee_idx].cpu().numpy()
+                ee_pos = self._robot.data.body_pos_w.torch[0, ee_idx].cpu().numpy()
                 self._ee_label.text = f"  EE: ({ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}) m"
             except Exception:
                 pass

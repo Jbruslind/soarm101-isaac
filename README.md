@@ -11,7 +11,7 @@ for robot communication.
 - **RAM**: 64 GB minimum, 256 GB recommended for CPU-offloaded training
 - **Disk**: 100 GB+ free (Isaac Sim container images are large)
 - **OS**: Ubuntu 22.04
-- **Driver**: NVIDIA 535.129.03+
+- **Driver**: NVIDIA 580.95.05+ (Isaac Sim 6.2; newer branches such as 615 work). See [Isaac versions](docs/ISAAC_VERSIONS.md)
 
 ## Quick Start
 
@@ -120,6 +120,7 @@ compatible containers run simultaneously.
 | Document | Description |
 |----------|-------------|
 | **[Quick Start](docs/QUICKSTART.md)** | Step-by-step setup and first run |
+| **[Isaac Versions](docs/ISAAC_VERSIONS.md)** | Isaac Sim 6.2 / Isaac Lab 3.0 pin, driver compatibility, 3.0 API conventions |
 | **[Full Example](docs/FULL_EXAMPLE.md)** | Complete end-to-end walkthrough with expected output |
 | **[Architecture](docs/ARCHITECTURE.md)** | System diagrams, data flows, container details, file map |
 | **[Data Pipeline](docs/DATA_PIPELINE.md)** | LeRobot v3.0 format, collection, normalization |
@@ -149,7 +150,7 @@ compatible containers run simultaneously.
 
 ## Key Technologies
 
-- **[NVIDIA Isaac Sim 5.1](https://developer.nvidia.com/isaac-sim)** -- High-fidelity physics simulation with RTX rendering
+- **[NVIDIA Isaac Sim 6.2](https://developer.nvidia.com/isaac-sim) + Isaac Lab 3.0** -- High-fidelity physics simulation with RTX rendering
 - **[Isaac Lab](https://isaac-sim.github.io/IsaacLab/)** -- Gymnasium-compatible RL/IL environments for Isaac Sim
 - **[OpenPi](https://github.com/Physical-Intelligence/openpi)** -- pi0 / pi0-FAST VLA model training and serving
 - **[LeRobot v3.0](https://huggingface.co/docs/lerobot)** -- Standardized robot learning dataset format

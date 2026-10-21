@@ -23,7 +23,7 @@ gui_enable() {
     # aborts with "Failed to create shared memory named carb-RStringInternals-1".
     # Clear them when no other Isaac Sim container is running (soarm-sunshine also
     # uses ipc: host, so it sees the same /dev/shm and can remove the root-owned files).
-    if [[ -z "$(docker ps -q --filter ancestor=soarm-isaac-sim)" ]]; then
+    if [[ -z "$(docker ps -q --filter label=com.docker.compose.service=isaac-sim)" ]]; then
         docker exec soarm-sunshine sh -c 'rm -f /dev/shm/carb-* /dev/shm/sem.carb*' || true
     fi
     export COMPOSE_FILE="$docker_dir/docker-compose.yml:$docker_dir/docker-compose.gui.yml"

@@ -9,11 +9,12 @@
 #   ./scripts/isaac.sh --gui                                   # full Isaac Sim editor
 #   ./scripts/isaac.sh --gui /isaac-sim/python.sh /isaac_envs/play_reach.py
 #   ./scripts/isaac.sh --headless --cameras -- /isaac-sim/python.sh /isaac_envs/sim_data_collector.py --num-episodes 10
-#   ./scripts/isaac.sh --headless /workspace/isaaclab/isaaclab.sh -p \
-#       /workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py --task Isaac-Reach-Franka-v0
+#   ./scripts/isaac.sh --headless /workspace/isaaclab/isaaclab.sh train \
+#       --rl_library rsl_rl --task Isaac-Reach-Franka physics=isaacsim_physx
 #   ./scripts/isaac.sh bash                                    # shell (headless env)
 #
-# Isaac Lab scripts using AppLauncher honour HEADLESS=0/1, which this sets per mode.
+# Sets HEADLESS=0/1 per mode. Isaac Lab 3.0 opens a window only for a Kit visualizer:
+# our scripts select it when HEADLESS=0; for Isaac Lab's own commands add --viz kit.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

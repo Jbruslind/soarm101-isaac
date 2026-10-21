@@ -14,7 +14,10 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg, RigidObject
 from isaaclab.utils import configclass
 
+from isaaclab_physx.sim.schemas import PhysxCollisionPropertiesCfg, PhysxRigidBodyPropertiesCfg
+
 from soarm_reach_env import (
+    IDENTITY_QUAT,
     SoarmReachEnv,
     SoarmReachEnvCfg,
     NUM_JOINTS,
@@ -33,11 +36,11 @@ class SoarmPickEnvCfg(SoarmReachEnvCfg):
         prim_path="/World/envs/env_.*/Cube",
         spawn=sim_utils.CuboidCfg(
             size=(0.03, 0.03, 0.03),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            rigid_props=PhysxRigidBodyPropertiesCfg(
                 max_depenetration_velocity=1.0,
             ),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.02),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
+            collision_props=PhysxCollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(
                 diffuse_color=(1.0, 0.2, 0.2),
             ),
@@ -75,27 +78,27 @@ class SoarmPickEnv(SoarmReachEnv):
         self.scene.rigid_objects["cube"] = self._cube
 
     def _get_observations(self) -> dict:
-        joint_pos = self._robot.data.joint_pos
-        joint_vel = self._robot.data.joint_vel
-        cube_pos = self._cube.data.root_pos_w
+        joint_pos = self._robot.data.joint_pos.torch
+        joint_vel = self._robot.data.joint_vel.torch
+        cube_pos = self._cube.data.root_pos_w.torch
         target_pos = self._target_pos
 
         obs = torch.cat([joint_pos, joint_vel, cube_pos, target_pos], dim=-1)
         obs_dict = {"policy": obs}
 
         if self._camera is not None:
-            obs_dict["wrist_rgb"] = self._camera.data.output["rgb"]
+            obs_dict["wrist_rgb"] = self._camera.data.output["rgb"].torch
 
         return obs_dict
 
     def _get_rewards(self) -> torch.Tensor:
-        ee_pos = self._robot.data.body_pos_w[:, -2, :]
-        cube_pos = self._cube.data.root_pos_w
+        ee_pos = self.ee_pos_w
+        cube_pos = self._cube.data.root_pos_w.torch
 
         dist_to_cube = torch.norm(ee_pos - cube_pos, dim=-1)
         dist_cube_target = torch.norm(cube_pos - self._target_pos, dim=-1)
 
-        gripper_closed = self._robot.data.joint_pos[:, -1] < -0.3
+        gripper_closed = self._robot.data.joint_pos.torch[:, -1] < -0.3
         cube_grasped = (dist_to_cube < self.cfg.grasp_threshold) & gripper_closed
         cube_lifted = cube_pos[:, 2] > 0.05
         cube_placed = dist_cube_target < self.cfg.place_threshold
@@ -108,7 +111,7 @@ class SoarmPickEnv(SoarmReachEnv):
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        cube_pos = self._cube.data.root_pos_w
+        cube_pos = self._cube.data.root_pos_w.torch
         dist_cube_target = torch.norm(cube_pos - self._target_pos, dim=-1)
         success = dist_cube_target < self.cfg.place_threshold
 
@@ -121,13 +124,13 @@ class SoarmPickEnv(SoarmReachEnv):
         num = len(env_ids)
         rand = torch.rand(num, 3, device=self.device)
         cube_pos = self._cube_min + rand * (self._cube_max - self._cube_min)
-        cube_quat = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=self.device).expand(num, -1)
+        cube_quat = torch.tensor([IDENTITY_QUAT], device=self.device).expand(num, -1)
 
-        self._cube.write_root_pose_to_sim(
-            torch.cat([cube_pos, cube_quat], dim=-1),
+        self._cube.write_root_pose_to_sim_index(
+            root_pose=torch.cat([cube_pos, cube_quat], dim=-1),
             env_ids=env_ids,
         )
-        self._cube.write_root_velocity_to_sim(
-            torch.zeros(num, 6, device=self.device),
+        self._cube.write_root_velocity_to_sim_index(
+            root_velocity=torch.zeros(num, 6, device=self.device),
             env_ids=env_ids,
         )

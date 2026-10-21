@@ -8,7 +8,10 @@ services:
     build:
       context: ./isaac-sim
       dockerfile: Dockerfile
-    image: soarm-isaac-sim
+      args:
+        ISAACSIM_VERSION: ${ISAACSIM_VERSION:-6.2.0.1}
+        ISAACLAB_REF: ${ISAACLAB_REF:-70ab24fec3eabf51222817db0cdb5a4e7133bd7e}
+    image: soarm-isaac-sim:${ISAACSIM_VERSION:-6.2.0.1}
     container_name: soarm-isaac-sim
     tty: true
     stdin_open: true

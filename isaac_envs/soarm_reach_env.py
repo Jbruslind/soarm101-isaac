@@ -4,6 +4,10 @@ The robot must move its end-effector (gripper_frame_link) to a randomly
 sampled target position in the workspace.  Observations include joint
 positions, joint velocities, and (optionally) a wrist camera image.
 Actions are 6 joint-position deltas plus 1 gripper command.
+
+Isaac Lab 3.0 / Isaac Sim 6.2: quaternions are (x, y, z, w), asset and sensor data
+are ProxyArray (use ``.torch``), and the viewport camera is a Kit visualizer
+(``SimulationCfg.default_visualizer_cfg``) opened with ``--viz kit``.
 """
 
 from __future__ import annotations
@@ -17,12 +21,19 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, Articulation
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
-from isaaclab.envs.common import ViewerCfg
 from isaaclab.markers import VisualizationMarkersCfg, VisualizationMarkers
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 from isaaclab.sensors import CameraCfg, Camera
+from isaaclab_physx.sim.schemas import (
+    PhysxArticulationRootPropertiesCfg,
+    PhysxCollisionPropertiesCfg,
+    PhysxRigidBodyPropertiesCfg,
+)
+from isaaclab_visualizers.kit import KitVisualizerCfg
+
+IDENTITY_QUAT = (0.0, 0.0, 0.0, 1.0)  # (x, y, z, w)
 
 # SO-ARM101 joint names (from URDF, shoulder-to-gripper order)
 SOARM_JOINT_NAMES = [
@@ -44,8 +55,18 @@ EE_BODY_NAME = "gripper_frame_link"
 class SoarmReachEnvCfg(DirectRLEnvCfg):
     """Configuration for the SO-ARM101 reach task."""
 
-    # Simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120.0, render_interval=2)
+    # Simulation. The viewport camera follows the robot when a Kit visualizer is
+    # open (--viz kit, e.g. via scripts/isaac.sh --gui).
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 120.0,
+        render_interval=2,
+        default_visualizer_cfg=KitVisualizerCfg(
+            origin_type="asset",
+            origin_track_path="robot",
+            eye=(0.8, 0.8, 0.5),
+            lookat=(0.0, 0.0, 0.2),
+        ),
+    )
     decimation: int = 4  # policy runs at 30 Hz
 
     # Episode
@@ -59,25 +80,17 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
     # Scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=1, env_spacing=1.5)
 
-    # Third-person viewport camera (follows robot when run with GUI / render_mode="human")
-    viewer: ViewerCfg = ViewerCfg(
-        origin_type="asset_root",
-        asset_name="robot",
-        eye=(0.8, 0.8, 0.5),
-        lookat=(0.0, 0.0, 0.2),
-    )
-
     # Robot (USD from URDF import has root at Robot/so101_new_calib; point to it so
     # only one articulation is found — the USD may also contain so101_new_calib_01)
     robot_cfg: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/Robot/so101_new_calib",
         spawn=sim_utils.UsdFileCfg(
             usd_path="/robot_description/usd/soarm101.usd",
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            rigid_props=PhysxRigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
             ),
-            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            articulation_props=PhysxArticulationRootPropertiesCfg(
                 enabled_self_collisions=True,
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=0,
@@ -97,15 +110,15 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
             "arm": ImplicitActuatorCfg(
                 joint_names_expr=["shoulder_pan", "shoulder_lift", "elbow_flex",
                                   "wrist_flex", "wrist_roll"],
-                velocity_limit_sim=2.0,
-                effort_limit_sim=30.0,
+                joint_velocity_limit=2.0,
+                joint_effort_limit=30.0,
                 stiffness=80.0,
                 damping=4.0,
             ),
             "gripper": ImplicitActuatorCfg(
                 joint_names_expr=["gripper"],
-                velocity_limit_sim=2.0,
-                effort_limit_sim=10.0,
+                joint_velocity_limit=2.0,
+                joint_effort_limit=10.0,
                 stiffness=80.0,
                 damping=4.0,
             ),
@@ -126,7 +139,7 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
         ),
         offset=CameraCfg.OffsetCfg(
             pos=(0.05, 0.0, 0.02),
-            rot=(1.0, 0.0, 0.0, 0.0),
+            rot=IDENTITY_QUAT,
             convention="world",
         ),
     )
@@ -145,10 +158,11 @@ class SoarmReachEnvCfg(DirectRLEnvCfg):
             focal_length=1.93,
             horizontal_aperture=2.65,
         ),
-        # Placed in world frame, looking roughly toward the robot workspace.
+        # Placed in world frame, looking at the robot workspace (0, 0, 0.2): yaw -135 deg,
+        # pitch 14.85 deg down. (An identity rotation looks along +X, away from the robot.)
         offset=CameraCfg.OffsetCfg(
             pos=(0.8, 0.8, 0.5),
-            rot=(1.0, 0.0, 0.0, 0.0),
+            rot=(0.1194, 0.049457, -0.916132, 0.379474),  # (x, y, z, w)
             convention="world",
         ),
     )
@@ -182,6 +196,10 @@ class SoarmReachEnv(DirectRLEnv):
             self.scene.sensors["third_person_cam"] if "third_person_cam" in self.scene.sensors else None
         )
 
+        # Resolve the end-effector by name; body order in the imported USD puts the moving
+        # jaw just before gripper_frame_link, so a fixed index is easy to get wrong.
+        self._ee_body_idx = self._robot.find_bodies(EE_BODY_NAME)[0][0]
+
         self._target_min = torch.tensor(cfg.target_min, device=self.device)
         self._target_max = torch.tensor(cfg.target_max, device=self.device)
 
@@ -189,6 +207,11 @@ class SoarmReachEnv(DirectRLEnv):
     def robot(self) -> Articulation:
         """The robot articulation asset (for IK controllers, Jacobians, etc.)."""
         return self._robot
+
+    @property
+    def ee_pos_w(self) -> torch.Tensor:
+        """End-effector (gripper_frame_link) position(s) in world frame, shape ``(num_envs, 3)``."""
+        return self._robot.data.body_pos_w.torch[:, self._ee_body_idx, :]
 
     @property
     def target_pos(self) -> torch.Tensor:
@@ -246,8 +269,8 @@ class SoarmReachEnv(DirectRLEnv):
         # Ground plane (local spawner – avoids Nucleus dependency)
         ground_cfg = sim_utils.CuboidCfg(
             size=(100.0, 100.0, 0.02),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-            collision_props=sim_utils.CollisionPropertiesCfg(),
+            rigid_props=PhysxRigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=PhysxCollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.3, 0.3)),
         )
         ground_cfg.func("/World/ground", ground_cfg, translation=(0.0, 0.0, -0.01))
@@ -272,40 +295,32 @@ class SoarmReachEnv(DirectRLEnv):
         )
 
     def _pre_physics_step(self, actions: torch.Tensor):
-        clamped = actions.clamp(-1.0, 1.0)
-        scaled = clamped * self.cfg.action_scale
-
-        current_pos = self._robot.data.joint_pos
-        target_pos = current_pos + scaled
-        self._robot.set_joint_position_target(target_pos)
+        # Joint-position deltas, applied once per policy step (action_scale rad/step)
+        # and held for the `decimation` physics substeps.
+        self.actions = actions.clamp(-1.0, 1.0)
+        self._joint_pos_target = self._robot.data.joint_pos.torch + self.actions * self.cfg.action_scale
 
     def _apply_action(self) -> None:
-        """Apply the current action (from self.actions) to the robot. Required by DirectRLEnv."""
-        action = self.actions
-        clamped = action.clamp(-1.0, 1.0)
-        scaled = clamped * self.cfg.action_scale
-
-        current_pos = self._robot.data.joint_pos
-        target_pos = current_pos + scaled
-        self._robot.set_joint_position_target(target_pos)
+        """Apply the joint targets computed in _pre_physics_step. Required by DirectRLEnv."""
+        self._robot.actuators.target_command.set_position_index(value=self._joint_pos_target)
 
     def _get_observations(self) -> dict:
-        joint_pos = self._robot.data.joint_pos
-        joint_vel = self._robot.data.joint_vel
+        joint_pos = self._robot.data.joint_pos.torch
+        joint_vel = self._robot.data.joint_vel.torch
 
         obs = torch.cat([joint_pos, joint_vel, self._target_pos], dim=-1)
 
         obs_dict = {"policy": obs}
 
         if self._camera is not None:
-            obs_dict["wrist_rgb"] = self._camera.data.output["rgb"]
+            obs_dict["wrist_rgb"] = self._camera.data.output["rgb"].torch
         if self._third_person_camera is not None:
-            obs_dict["third_person_rgb"] = self._third_person_camera.data.output["rgb"]
+            obs_dict["third_person_rgb"] = self._third_person_camera.data.output["rgb"].torch
 
         return obs_dict
 
     def _get_rewards(self) -> torch.Tensor:
-        ee_pos = self._robot.data.body_pos_w[:, -2, :]  # gripper_frame_link
+        ee_pos = self.ee_pos_w
         dist = torch.norm(ee_pos - self._target_pos, dim=-1)
 
         reward = self.cfg.reward_dist_scale * dist
@@ -313,7 +328,7 @@ class SoarmReachEnv(DirectRLEnv):
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        ee_pos = self._robot.data.body_pos_w[:, -2, :]
+        ee_pos = self.ee_pos_w
         dist = torch.norm(ee_pos - self._target_pos, dim=-1)
         success = dist < self.cfg.success_threshold
 
@@ -327,9 +342,9 @@ class SoarmReachEnv(DirectRLEnv):
         num = len(env_ids)
         noise = torch.randn(num, NUM_JOINTS, device=self.device) * 0.1
         default_pos = torch.zeros(num, NUM_JOINTS, device=self.device)
-        self._robot.write_joint_state_to_sim(
-            default_pos + noise,
-            torch.zeros(num, NUM_JOINTS, device=self.device),
+        self._robot.write_joint_state_to_sim_index(
+            position=default_pos + noise,
+            velocity=torch.zeros(num, NUM_JOINTS, device=self.device),
             env_ids=env_ids,
         )
 
