@@ -120,11 +120,13 @@ compatible containers run simultaneously.
 | Document | Description |
 |----------|-------------|
 | **[Quick Start](docs/QUICKSTART.md)** | Step-by-step setup and first run |
+| **[Tutorials](docs/tutorials/README.md)** | Prompted, runnable tutorials (start with F0: setup and Moonlight streaming) |
 | **[Isaac Versions](docs/ISAAC_VERSIONS.md)** | Isaac Sim 6.2 / Isaac Lab 3.0 pin, driver compatibility, 3.0 API conventions |
 | **[Full Example](docs/FULL_EXAMPLE.md)** | Complete end-to-end walkthrough with expected output |
 | **[Architecture](docs/ARCHITECTURE.md)** | System diagrams, data flows, container details, file map |
 | **[Data Pipeline](docs/DATA_PIPELINE.md)** | LeRobot v3.0 format, collection, normalization |
 | **[Training Guide](docs/OPENPI_TRAINING.md)** | OpenPi fine-tuning, memory budget, config reference |
+| **[LeRobot Training](docs/LEROBOT_TRAINING.md)** | SmolVLA / ACT fine-tuning on the 12 GB GPU: container, wrapper, VRAM/throughput table |
 | **[Isaac Sim Environments](docs/ISAAC_SIM_ENVIRONMENTS.md)** | Reach and pick tasks, observation/action spaces |
 | **[ROS2 Bridge](docs/ROS2_BRIDGE.md)** | VLA bridge node, topics, action chunking |
 | **[Remote Deployment](docs/REMOTE_DEPLOYMENT.md)** | Cloud GPU setup, TLS, data sync, latency |

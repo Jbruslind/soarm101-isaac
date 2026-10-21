@@ -69,7 +69,7 @@ echo ""
 echo "2. Checking script permissions..."
 for script in setup_robot_usd.sh collect_sim_data.sh train.sh eval_sim.sh \
               deploy_real.sh deploy_cloud.sh sync_data.sh smoke_test.sh \
-              sunshine.sh isaac.sh; do
+              sunshine.sh isaac.sh check_tutorials.sh; do
     check "$script is executable" test -x "$PROJECT_DIR/scripts/$script"
 done
 
@@ -152,6 +152,11 @@ obs = build_observation({SOARM_JOINT_NAMES[0]: 0.1}, np.zeros((IMAGE_SIZE, IMAGE
 assert 'state' in obs and 'images' in obs
 "
 check "soarm_common contract imports without Isaac" python3 "$PROJECT_DIR/isaac_envs/soarm_common/contract.py"
+
+# --- 8. Tutorials ---
+echo ""
+echo "8. Checking tutorials (scripts compile, links, snippets)..."
+check "check_tutorials.sh passes" "$SCRIPT_DIR/check_tutorials.sh"
 
 # Cleanup
 rm -rf "$TEST_DATA_DIR"
