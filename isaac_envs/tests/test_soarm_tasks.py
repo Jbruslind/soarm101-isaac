@@ -20,6 +20,7 @@ TASKS = (
     "Soarm-PickPlace-Fastener-JointAbs-v0",
     "Soarm-PickPlace-Fastener-IK-Abs-v0",
     "Soarm-PickPlace-Fastener-State-v0",
+    "Soarm-PickPlace-Fastener-IK-Rel-v0",
 )
 
 
