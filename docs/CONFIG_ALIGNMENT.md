@@ -40,9 +40,16 @@ Both: 224x224 RGB, focal length 1.93 mm, horizontal aperture 2.65 mm (69 deg HFO
   on its +y side, 7 cm back from the tips, aimed at (-0.01, 0, 0.01) (between the jaws, just past
   the tips), image up = gripper +x. It sees both jaws, the object in the jaws and the place
   target.
-- **Overhead:** world (0.45, 0.40, 0.30) looking at (0.19, 0, 0.03), an elevated three-quarter
-  view of the table area (close enough that a 3 cm object is visible at 224 px). The name
-  "overhead" is kept for the ROS topic and the `cam_overhead` policy key.
+- **Overhead:** in front of the robot at (0.35, 0.035, 0.26), 60 deg above the table and 0.30 m
+  from (0.20, 0.035, 0), looking back at the robot (image up = towards the base). It covers the
+  fastener work cell of `soarm_tasks` (spawn area and bin) and the cube area of `SoarmPickEnv`.
+  An M6x20 bolt is 8.5-13 px long (mean 11) at the pick pose; from the earlier three-quarter view
+  at (0.45, 0.40, 0.30) it was 3.5-6 px (issue #32, `soarm_tasks/scripts/camera_check.py`).
+  `CONTRACT_VERSION` went to 2 with this change: datasets record it in `meta/info.json`
+  (`soarm_contract_version`), and overhead images recorded before it come from the old view. The
+  collector, the envs and `interactive_inference.py` read the pose from the contract; the ROS
+  bridge and policy server only see the images. The name "overhead" is kept for the ROS topic
+  and the `cam_overhead` policy key.
 
 ### Timing and actions
 
