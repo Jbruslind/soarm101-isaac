@@ -84,6 +84,10 @@ if [[ -d "$PROJECT_DIR/training/configs" ]]; then
     rsync -avz --progress \
         "$PROJECT_DIR/training/configs/" \
         "$JETSON_HOST:$REMOTE_DIR/docker/training/configs/"
+    # The SO-ARM101 contract (joint names, camera keys) imported by soarm_config.py
+    rsync -avz --progress --exclude "__pycache__" \
+        "$PROJECT_DIR/isaac_envs/soarm_common/" \
+        "$JETSON_HOST:$REMOTE_DIR/docker/training/configs/soarm_common/"
 fi
 
 # Sync SOARM checkpoint directory expected by OPENPI_CHECKPOINT_DIR=/models/soarm_lora.

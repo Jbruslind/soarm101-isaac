@@ -234,13 +234,13 @@ OPENPI_HOST=localhost OPENPI_PORT=8000 ./scripts/eval_sim.sh
 | Network | Round-trip | Impact |
 |---|---|---|
 | Localhost | < 1 ms | None |
-| LAN | 1-5 ms | Imperceptible at 10 Hz |
+| LAN | 1-5 ms | Imperceptible at 30 Hz |
 | WAN (same region) | 20-50 ms | Minimal with action chunking |
 | WAN (cross-region) | 50-100 ms | Acceptable with action chunking |
 
 **Action chunking** makes WAN latency tolerable.  Each inference call
 returns a chunk of N future actions (typically 10-50).  The ROS2 bridge
-executes these locally at full 10 Hz rate while the next inference
+executes these locally at the full 30 Hz control rate while the next inference
 round-trips over the network in the background.
 
 ```

@@ -1,0 +1,9 @@
+{
+  "env": {},
+  "apps": [
+    {
+      "name": "SO-ARM Isaac Desktop",
+      "image-path": "desktop.png"
+    }
+  ]
+}

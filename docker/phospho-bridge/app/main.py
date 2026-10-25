@@ -41,15 +41,27 @@ import uvicorn
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-SOARM_JOINT_NAMES = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
-NUM_JOINTS = 6
+
+
+def _load_contract():
+    """Import the shared SO-ARM101 contract (isaac_envs/soarm_common/contract.py): from PYTHONPATH,
+    $SOARM_COMMON_DIR or /opt/soarm, where docker-compose.yml mounts it."""
+    import importlib
+
+    try:
+        return importlib.import_module("soarm_common.contract")
+    except ImportError:
+        pass
+    for cand in (os.environ.get("SOARM_COMMON_DIR"), "/opt/soarm"):
+        if cand and os.path.isfile(os.path.join(cand, "soarm_common", "contract.py")):
+            sys.path.insert(0, cand)
+            return importlib.import_module("soarm_common.contract")
+    raise ImportError("soarm_common.contract not found; mount isaac_envs/soarm_common at /opt/soarm/soarm_common")
+
+
+C = _load_contract()
+SOARM_JOINT_NAMES = list(C.JOINT_NAMES)
+NUM_JOINTS = C.NUM_JOINTS
 BRIDGE_PORT = int(os.environ.get("PHOSPHO_BRIDGE_PORT", "8080"))
 # Drop camera frames if Isaac publishes faster than this (reduces CPU/GIL load when sim is live).
 _CAM_MIN_INTERVAL = float(os.environ.get("PHOSPHO_CAM_MIN_INTERVAL_SEC", "0.04"))  # ~25 Hz max per camera
@@ -185,20 +197,20 @@ class PhosphoBridgeNode(Node):
             depth=1,
         )
 
-        self.create_subscription(JointState, "/joint_states", self._on_joint_states, joint_qos)
-        self.create_subscription(Image, "/camera/wrist/image_raw", self._on_wrist_image, camera_qos)
-        self.create_subscription(Image, "/camera/overhead/image_raw", self._on_overhead_image, camera_qos)
+        self.create_subscription(JointState, C.JOINT_STATES_TOPIC, self._on_joint_states, joint_qos)
+        self.create_subscription(Image, C.WRIST_CAMERA.ros_topic, self._on_wrist_image, camera_qos)
+        self.create_subscription(Image, C.OVERHEAD_CAMERA.ros_topic, self._on_overhead_image, camera_qos)
 
-        # Match vla_bridge create_publisher(JointState, "/joint_commands", 10)
+        # Match vla_bridge create_publisher(JointState, C.JOINT_COMMANDS_TOPIC, 10)
         cmd_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
 
-        self.pub_joint_cmd = self.create_publisher(JointState, "/joint_commands", cmd_qos)
-        self.pub_vla_prompt = self.create_publisher(String, "/vla/prompt", cmd_qos)
-        self.pub_vla_enabled = self.create_publisher(Bool, "/vla/enabled", cmd_qos)
+        self.pub_joint_cmd = self.create_publisher(JointState, C.JOINT_COMMANDS_TOPIC, cmd_qos)
+        self.pub_vla_prompt = self.create_publisher(String, C.PROMPT_TOPIC, cmd_qos)
+        self.pub_vla_enabled = self.create_publisher(Bool, C.ENABLED_TOPIC, cmd_qos)
 
         self.get_logger().info("PhosphoBridgeNode initialized")
 

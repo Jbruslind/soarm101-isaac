@@ -1,0 +1,46 @@
+# Rendered by entrypoint.sh: @BUSID@, @OUTPUT@ are substituted at container start.
+# Headless NVIDIA X server with one virtual monitor described by a custom EDID.
+
+Section "ServerFlags"
+    Option "AutoAddGPU"         "false"   # ignore any non-NVIDIA (e.g. VM virtual VGA) adapter
+    Option "DontVTSwitch"       "true"
+    Option "AllowMouseOpenFail" "true"
+    Option "BlankTime"          "0"
+    Option "StandbyTime"        "0"
+    Option "SuspendTime"        "0"
+    Option "OffTime"            "0"
+EndSection
+
+Section "Files"
+    # Where the NVIDIA container toolkit mounts the host's Xorg modules (Ubuntu hosts),
+    # then the stock path the entrypoint installs fetched modules into.
+    ModulePath "/usr/lib/x86_64-linux-gnu/nvidia/xorg"
+    ModulePath "/usr/lib/xorg/modules"
+EndSection
+
+Section "Device"
+    Identifier "nvidia"
+    Driver     "nvidia"
+    BusID      "@BUSID@"
+    Option     "AllowEmptyInitialConfiguration" "true"
+    Option     "ConnectedMonitor" "@OUTPUT@"
+    Option     "CustomEDID"       "@OUTPUT@:/etc/X11/soarm-edid.bin"
+    Option     "ModeValidation"   "NoMaxPClkCheck, NoEdidMaxPClkCheck, NoMaxSizeCheck, NoHorizSyncCheck, NoVertRefreshCheck, AllowNonEdidModes"
+    Option     "HardDPMS"         "false"
+EndSection
+
+Section "Monitor"
+    Identifier "virtual"
+    Option     "DPMS" "false"
+EndSection
+
+Section "Screen"
+    Identifier   "screen"
+    Device       "nvidia"
+    Monitor      "virtual"
+    DefaultDepth 24
+    Option       "MetaModes" "@OUTPUT@: nvidia-auto-select +0+0"
+    SubSection "Display"
+        Depth 24
+    EndSubSection
+EndSection

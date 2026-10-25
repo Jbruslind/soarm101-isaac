@@ -24,8 +24,27 @@ import time as _time
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="Interactive VLA inference test")
+parser.add_argument(
+    "--snapshot", metavar="DIR", default=None,
+    help="Test mode: hold --snapshot-joint-pos, save one wrist and one overhead camera image "
+         "(<DIR>/<camera>.png and .npy) and exit, without ROS or UI. Used to check that inference "
+         "renders the same images as data collection.",
+)
+parser.add_argument(
+    "--snapshot-joint-pos", default="0,0,0,0,0,0",
+    help="Joint positions (rad, contract joint order) for --snapshot: 6 comma-separated values "
+         "per pose, poses separated by ';'.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
+# The wrist/overhead cameras always render (ROS image topics). Isaac Lab 3.0 picks the Kit
+# experience from this flag only (the ENABLE_CAMERAS env var is no longer read); without it a
+# headless run gets isaaclab.python.headless.kit, whose renderer reads USD instead of Fabric, and
+# the published images showed the robot frozen at its USD pose while the joints moved.
+args.enable_cameras = True
+# Isaac Lab 3.0 only opens a window for a Kit visualizer (livestream adds one itself).
+if os.environ.get("HEADLESS") == "0" and not args.visualizer:
+    args.visualizer = "kit"
 
 app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
@@ -54,31 +73,28 @@ import omni.timeline
 from pxr import Usd, UsdGeom, Gf, Sdf
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg, Articulation
-from isaaclab.sensors import CameraCfg, Camera
-from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.assets import Articulation
+from isaaclab.sensors import Camera
 from isaaclab.sim import SimulationCfg, SimulationContext
+from isaaclab_physx.sim.schemas import PhysxCollisionPropertiesCfg, PhysxRigidBodyPropertiesCfg
 
 # ---------------------------------------------------------------------------
-# Constants (matching soarm_reach_env.py)
+# Robot, cameras, timing and topics: the shared contract (same as data collection)
 # ---------------------------------------------------------------------------
-SOARM_JOINT_NAMES = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
-NUM_JOINTS = 6
-EE_BODY_NAME = "gripper_frame_link"
-ROBOT_USD_PATH = "/robot_description/usd/soarm101.usd"
-ROBOT_PRIM_PATH = "/World/Robot/so101_new_calib"
+from soarm_common import contract as C
+from soarm_common.cameras import camera_prim_path, make_camera_cfg
+from soarm_common.robot import check_joint_limits, make_physx_cfg, make_robot_cfg
+from soarm_common.scene import spawn_ground_and_light
+
+SOARM_JOINT_NAMES = list(C.JOINT_NAMES)
+NUM_JOINTS = C.NUM_JOINTS
+ROBOT_PRIM_PATH = C.INTERACTIVE_ROBOT_PRIM_PATH
 # PhysX/ROS2 nodes often need the *actual* articulation-root prim (can be a descendant of ROBOT_PRIM_PATH).
 ROBOT_ARTICULATION_PRIM_PATH = ROBOT_PRIM_PATH
 # Camera/link attachments should stay on the robot model hierarchy (not articulation-root fallback).
 ROBOT_MODEL_PRIM_PATH = ROBOT_PRIM_PATH
+# Fixed cameras go under /World/Cameras (the env uses /World/envs/env_0/Cameras; both at the origin).
+CAMERA_ENV_PATH = C.INTERACTIVE_CAMERA_ROOT.rsplit("/", 1)[0]
 
 # Execution states
 STATE_IDLE = "IDLE"
@@ -171,83 +187,12 @@ def _create_camera_debug_frustum(
     print(f"[INFO] Added camera debug frustum: {frustum_path}", flush=True)
 
 
-def _force_exact_camera_world_transform(
-    stage: Usd.Stage,
-    camera_prim_path: str,
-    pos_xyz: tuple[float, float, float],
-    euler_xyz_deg: tuple[float, float, float],
-) -> None:
-    """Author an exact world-space camera transform with no inherited offsets.
-
-    This clears existing xform ops and sets resetXformStack so the authored
-    translate/orient on the camera prim is the exact final transform seen in Sim.
-    """
-    prim = stage.GetPrimAtPath(camera_prim_path)
-    if not prim.IsValid():
-        print(f"[WARN] Cannot force camera transform; prim not found: {camera_prim_path}", flush=True)
-        return
-
-    quat_wxyz = _euler_xyz_to_quat_wxyz(*euler_xyz_deg)
-    xform = UsdGeom.Xformable(prim)
-    xform.ClearXformOpOrder()
-    xform.SetResetXformStack(True)
-    t_op = xform.AddTranslateOp(precision=UsdGeom.XformOp.PrecisionDouble)
-    r_op = xform.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble)
-    t_op.Set(Gf.Vec3d(float(pos_xyz[0]), float(pos_xyz[1]), float(pos_xyz[2])))
-    r_op.Set(Gf.Quatd(float(quat_wxyz[0]), Gf.Vec3d(float(quat_wxyz[1]), float(quat_wxyz[2]), float(quat_wxyz[3]))))
-    print(
-        f"[INFO] Forced exact camera world transform on {camera_prim_path}: "
-        f"pos={pos_xyz}, euler_deg={euler_xyz_deg}",
-        flush=True,
-    )
-
-
 def _remove_ros2_bridge_graph():
     """Delete a partially-created OmniGraph if a previous attempt left it behind."""
     stage = omni.usd.get_context().get_stage()
     graph_prim = stage.GetPrimAtPath("/World/ROS2Bridge")
     if graph_prim.IsValid():
         stage.RemovePrim(graph_prim.GetPath())
-
-
-def _euler_xyz_to_quat_wxyz(rx_deg: float, ry_deg: float, rz_deg: float) -> tuple[float, float, float, float]:
-    """Convert Euler angles (X, Y, Z) in degrees to quaternion (w, x, y, z).
-
-    Uses intrinsic XYZ order: rotate about X, then Y, then Z. Result is normalized.
-    Isaac Lab OffsetCfg expects (w, x, y, z); world convention uses +X forward, +Z up.
-    Implemented via quaternion multiplication (q = qz * qy * qx) to avoid sign/order bugs.
-    """
-    rx = math.radians(rx_deg)
-    ry = math.radians(ry_deg)
-    rz = math.radians(rz_deg)
-
-    def qx(a: float) -> tuple[float, float, float, float]:
-        ha = a / 2
-        return (math.cos(ha), math.sin(ha), 0.0, 0.0)
-
-    def qy(a: float) -> tuple[float, float, float, float]:
-        ha = a / 2
-        return (math.cos(ha), 0.0, math.sin(ha), 0.0)
-
-    def qz(a: float) -> tuple[float, float, float, float]:
-        ha = a / 2
-        return (math.cos(ha), 0.0, 0.0, math.sin(ha))
-
-    def mul(p: tuple[float, float, float, float], q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
-        pw, px, py, pz = p
-        qw, qx_, qy_, qz_ = q
-        return (
-            pw * qw - px * qx_ - py * qy_ - pz * qz_,
-            pw * qx_ + px * qw + py * qz_ - pz * qy_,
-            pw * qy_ - px * qz_ + py * qw + pz * qx_,
-            pw * qz_ + px * qy_ - py * qx_ + pz * qw,
-        )
-
-    q = mul(mul(qz(rz), qy(ry)), qx(rx))
-    n = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
-    if n < 1e-10:
-        return (1.0, 0.0, 0.0, 0.0)
-    return (q[0] / n, q[1] / n, q[2] / n, q[3] / n)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -257,82 +202,23 @@ def _euler_xyz_to_quat_wxyz(rx_deg: float, ry_deg: float, rz_deg: float) -> tupl
 def _setup_scene(sim: SimulationContext):
     """Spawn robot, cameras, ground, and lighting onto the USD stage.
 
-    The robot USD (from URDF import) can contain two articulation roots
-    (so101_new_calib and so101_new_calib_01). We remove the duplicate so
-    only one SO-ARM101 is visible. The wrist camera is parented to
-    gripper_frame_link and moves with the end-effector.
+    The wrist camera is parented to gripper_frame_link and moves with the end-effector.
     """
     global ROBOT_ARTICULATION_PRIM_PATH, ROBOT_MODEL_PRIM_PATH
     stage = omni.usd.get_context().get_stage()
 
-    # -- Robot USD --
-    robot_cfg = ArticulationCfg(
-        prim_path=ROBOT_PRIM_PATH,
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=ROBOT_USD_PATH,
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,
-                max_depenetration_velocity=5.0,
-            ),
-            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True,
-                solver_position_iteration_count=8,
-                solver_velocity_iteration_count=0,
-            ),
-        ),
-        init_state=ArticulationCfg.InitialStateCfg(
-            joint_pos={name: 0.0 for name in SOARM_JOINT_NAMES},
-        ),
-        actuators={
-            "arm": ImplicitActuatorCfg(
-                joint_names_expr=SOARM_JOINT_NAMES[:5],
-                velocity_limit_sim=2.0,
-                effort_limit_sim=30.0,
-                stiffness=80.0,
-                damping=4.0,
-            ),
-            "gripper": ImplicitActuatorCfg(
-                joint_names_expr=["gripper"],
-                velocity_limit_sim=2.0,
-                effort_limit_sim=10.0,
-                stiffness=80.0,
-                damping=4.0,
-            ),
-        },
-    )
-    robot_cfg.spawn.func("/World/Robot", robot_cfg.spawn)
+    # -- Robot USD (soarm_common.robot, same cfg as the Isaac Lab envs) --
+    robot_cfg = make_robot_cfg(ROBOT_PRIM_PATH)
+    robot_cfg.spawn.func(ROBOT_PRIM_PATH, robot_cfg.spawn)
 
-    # The URDF→USD importer often creates two articulation roots: so101_new_calib and
-    # so101_new_calib_01. They come from a reference, so RemovePrim() does not stick.
-    # Deactivate the duplicate so only one robot is visible and controlled.
-    robot_prim = stage.GetPrimAtPath("/World/Robot")
-    if robot_prim.IsValid():
-        deactivated = 0
-        for child in robot_prim.GetChildren():
-            if child.GetName() != "so101_new_calib":
-                child.SetActive(False)
-                deactivated += 1
-        if deactivated:
-            print(f"[INFO] Deactivated {deactivated} duplicate robot prim(s) (kept so101_new_calib).", flush=True)
-
-    # Resolve the actual articulation-root prim path to use for PhysX/ROS2.
-    # In some imported USDs, /World/Robot/so101_new_calib is an Xform container,
-    # while the articulation root is a descendant prim.
+    # Resolve the actual articulation-root prim path to use for PhysX/ROS2 (with the
+    # converter's articulation-root fix this is ROBOT_PRIM_PATH itself).
     try:
         from pxr import UsdPhysics
         _resolved = None
 
-        # Prefer the active child under /World/Robot that matches the expected name.
-        _robot_root = stage.GetPrimAtPath("/World/Robot")
-        _preferred = None
-        if _robot_root.IsValid():
-            for _c in _robot_root.GetChildren():
-                if _c.IsActive() and _c.GetName() == "so101_new_calib":
-                    _preferred = _c
-                    break
-
         # Search for the first active prim that has ArticulationRootAPI applied.
-        _search_root = _preferred if _preferred is not None else stage.GetPrimAtPath(ROBOT_PRIM_PATH)
+        _search_root = stage.GetPrimAtPath(ROBOT_PRIM_PATH)
         if _search_root.IsValid():
             for _p in Usd.PrimRange(_search_root):
                 if _p.IsActive() and _p.HasAPI(UsdPhysics.ArticulationRootAPI):
@@ -344,10 +230,7 @@ def _setup_scene(sim: SimulationContext):
 
         # Update global and cfg so everything uses the true articulation root.
         ROBOT_ARTICULATION_PRIM_PATH = _resolved
-        if _preferred is not None:
-            ROBOT_MODEL_PRIM_PATH = str(_preferred.GetPath())
-        else:
-            ROBOT_MODEL_PRIM_PATH = ROBOT_PRIM_PATH
+        ROBOT_MODEL_PRIM_PATH = ROBOT_PRIM_PATH
         robot_cfg.prim_path = _resolved
     except Exception:
         pass
@@ -357,78 +240,25 @@ def _setup_scene(sim: SimulationContext):
     robot = Articulation(robot_cfg)
     robot_cfg.spawn = saved_spawn
 
-    # -- Ground plane --
-    ground_cfg = sim_utils.CuboidCfg(
-        size=(100.0, 100.0, 0.02),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.3, 0.3, 0.3)),
-    )
-    ground_cfg.func("/World/ground", ground_cfg, translation=(0.0, 0.0, -0.01))
-
-    # -- Lighting --
-    light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-    light_cfg.func("/World/light", light_cfg)
+    # -- Ground plane and lighting (shared with the envs) --
+    spawn_ground_and_light()
 
     # -- Container for user-spawned objects --
     stage.DefinePrim("/World/SpawnedObjects", "Xform")
 
-    # -- Cameras --
-    stage.DefinePrim("/World/Cameras", "Xform")
-
-    # 1) Wrist (gripper) camera: under the robot so it moves with the end-effector.
-    #    Position (-0.03, 0.05, -0.09) m under gripper_frame_link.
-    #    Rotation remains as configured below unless explicitly changed.
-    #    In the Stage panel it appears under World > Robot > so101_new_calib > gripper_frame_link > wrist_cam.
-    _wrist_cam_prim = f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"
-    wrist_cam = Camera(CameraCfg(
-        prim_path=_wrist_cam_prim,
-        update_period=0.0333,
-        height=224, width=224,
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(focal_length=1.93, horizontal_aperture=2.65),
-        offset=CameraCfg.OffsetCfg(
-            pos=(-0.03, 0.05, -0.09),
-            rot=(-0.275637, 0.0, 0.961262, 0.0),  # Euler (-180, -32, -180) deg (x,y,z)
-            convention="world",
-        ),
-    ))
-
-    # 2) Overhead camera: exact transform requested for Isaac Sim camera prim:
-    #    Translate = (0.1, 0.0, 0.8), Orient (Euler XYZ deg) = (0, -20, 0).
-    # Keep convention="world" so this is applied as a direct world-space camera pose.
-    _overhead_euler_deg = (0.0, -20.0, 0.0)
-    _overhead_quat = _euler_xyz_to_quat_wxyz(*_overhead_euler_deg)
-    _norm = math.sqrt(sum(x * x for x in _overhead_quat))
-    print(
-        f"[INFO] Overhead cam: euler_deg={_overhead_euler_deg} -> quat(w,x,y,z)={_overhead_quat} (norm={_norm:.6f})",
-        flush=True,
-    )
-    overhead_cam = Camera(CameraCfg(
-        prim_path="/World/Cameras/overhead_cam",
-        update_period=0.0333,
-        height=224, width=224,
-        data_types=["rgb"],
-        spawn=sim_utils.PinholeCameraCfg(focal_length=1.93, horizontal_aperture=2.65),
-        offset=CameraCfg.OffsetCfg(
-            pos=(0.1, 0.0, 0.8),
-            rot=_overhead_quat,
-            convention="world",
-        ),
-    ))
-
-    # Force exact authored transform on the camera prim so no additional xform ops
-    # or inherited parent transforms alter the requested pose.
-    _force_exact_camera_world_transform(
-        stage,
-        "/World/Cameras/overhead_cam",
-        (0.1, 0.0, 0.8),
-        (0.0, -20.0, 0.0),
-    )
+    # -- Cameras: the contract's wrist and overhead cameras, as in data collection --
+    stage.DefinePrim(C.INTERACTIVE_CAMERA_ROOT, "Xform")
+    # Wrist camera under gripper_frame_link (Stage panel: World > Robot > Geometry > ... >
+    # gripper_frame_link > wrist_cam); overhead camera at /World/Cameras/overhead_cam.
+    _wrist_cam_prim = camera_prim_path(C.WRIST_CAMERA, ROBOT_MODEL_PRIM_PATH, CAMERA_ENV_PATH)
+    _overhead_cam_prim = camera_prim_path(C.OVERHEAD_CAMERA, ROBOT_MODEL_PRIM_PATH, CAMERA_ENV_PATH)
+    wrist_cam = Camera(make_camera_cfg(C.WRIST_CAMERA, _wrist_cam_prim))
+    overhead_cam = Camera(make_camera_cfg(C.OVERHEAD_CAMERA, _overhead_cam_prim))
 
     # Debug frustum line meshes (workaround for missing camera FOV gizmos in some Isaac Sim 5.1 views).
-    _create_camera_debug_frustum(stage, _wrist_cam_prim)
-    _create_camera_debug_frustum(stage, "/World/Cameras/overhead_cam")
+    if args.snapshot is None:
+        _create_camera_debug_frustum(stage, _wrist_cam_prim)
+        _create_camera_debug_frustum(stage, _overhead_cam_prim)
 
     return robot, wrist_cam, overhead_cam
 
@@ -508,9 +338,9 @@ def _setup_ros2_bridge():
                         ("art_ctrl", f"{_cn_prefix}.IsaacArticulationController"),
                     ],
                     keys.SET_VALUES: [
-                        ("pub_joint.inputs:topicName", "/joint_states"),
+                        ("pub_joint.inputs:topicName", C.JOINT_STATES_TOPIC),
                         ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
-                        ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                        ("sub_joint_cmd.inputs:topicName", C.JOINT_COMMANDS_TOPIC),
                         ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
                     ],
                     keys.CONNECT: [
@@ -541,20 +371,20 @@ def _setup_ros2_bridge():
                         ("cam_overhead_helper", f"{_og_prefix}.ROS2CameraHelper"),
                     ],
                     keys.SET_VALUES: [
-                        ("pub_joint.inputs:topicName", "/joint_states"),
+                        ("pub_joint.inputs:topicName", C.JOINT_STATES_TOPIC),
                         ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
-                        ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                        ("sub_joint_cmd.inputs:topicName", C.JOINT_COMMANDS_TOPIC),
                         ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
-                        ("cam_wrist_helper.inputs:topicName", "/camera/wrist/image_raw"),
+                        ("cam_wrist_helper.inputs:topicName", C.WRIST_CAMERA.ros_topic),
                         ("cam_wrist_helper.inputs:type", "rgb"),
-                        ("cam_overhead_helper.inputs:topicName", "/camera/overhead/image_raw"),
+                        ("cam_overhead_helper.inputs:topicName", C.OVERHEAD_CAMERA.ros_topic),
                         ("cam_overhead_helper.inputs:type", "rgb"),
-                        ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"),
-                        ("rp_wrist.inputs:width", 224),
-                        ("rp_wrist.inputs:height", 224),
-                        ("rp_overhead.inputs:cameraPrim", "/World/Cameras/overhead_cam"),
-                        ("rp_overhead.inputs:width", 224),
-                        ("rp_overhead.inputs:height", 224),
+                        ("rp_wrist.inputs:cameraPrim", camera_prim_path(C.WRIST_CAMERA, ROBOT_MODEL_PRIM_PATH, CAMERA_ENV_PATH)),
+                        ("rp_wrist.inputs:width", C.WRIST_CAMERA.width),
+                        ("rp_wrist.inputs:height", C.WRIST_CAMERA.height),
+                        ("rp_overhead.inputs:cameraPrim", camera_prim_path(C.OVERHEAD_CAMERA, ROBOT_MODEL_PRIM_PATH, CAMERA_ENV_PATH)),
+                        ("rp_overhead.inputs:width", C.OVERHEAD_CAMERA.width),
+                        ("rp_overhead.inputs:height", C.OVERHEAD_CAMERA.height),
                     ],
                     keys.CONNECT: [
                         ("tick.outputs:tick", "pub_joint.inputs:execIn"),
@@ -592,9 +422,9 @@ def _setup_ros2_bridge():
                             ("art_ctrl", f"{_cn_prefix}.IsaacArticulationController"),
                         ],
                         keys.SET_VALUES: [
-                            ("pub_joint.inputs:topicName", "/joint_states"),
+                            ("pub_joint.inputs:topicName", C.JOINT_STATES_TOPIC),
                             ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
-                            ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                            ("sub_joint_cmd.inputs:topicName", C.JOINT_COMMANDS_TOPIC),
                             ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
                         ],
                         keys.CONNECT: [
@@ -623,20 +453,20 @@ def _setup_ros2_bridge():
                             ("cam_overhead_helper", f"{_og_prefix}.ROS2CameraHelper"),
                         ],
                         keys.SET_VALUES: [
-                            ("pub_joint.inputs:topicName", "/joint_states"),
+                            ("pub_joint.inputs:topicName", C.JOINT_STATES_TOPIC),
                             ("pub_joint.inputs:targetPrim", ROBOT_ARTICULATION_PRIM_PATH),
-                            ("sub_joint_cmd.inputs:topicName", "/joint_commands"),
+                            ("sub_joint_cmd.inputs:topicName", C.JOINT_COMMANDS_TOPIC),
                             ("art_ctrl.inputs:robotPath", ROBOT_ARTICULATION_PRIM_PATH),
-                            ("cam_wrist_helper.inputs:topicName", "/camera/wrist/image_raw"),
+                            ("cam_wrist_helper.inputs:topicName", C.WRIST_CAMERA.ros_topic),
                             ("cam_wrist_helper.inputs:type", "rgb"),
-                            ("cam_overhead_helper.inputs:topicName", "/camera/overhead/image_raw"),
+                            ("cam_overhead_helper.inputs:topicName", C.OVERHEAD_CAMERA.ros_topic),
                             ("cam_overhead_helper.inputs:type", "rgb"),
-                            ("rp_wrist.inputs:cameraPrim", f"{ROBOT_MODEL_PRIM_PATH}/{EE_BODY_NAME}/wrist_cam"),
-                            ("rp_wrist.inputs:width", 224),
-                            ("rp_wrist.inputs:height", 224),
-                            ("rp_overhead.inputs:cameraPrim", "/World/Cameras/overhead_cam"),
-                            ("rp_overhead.inputs:width", 224),
-                            ("rp_overhead.inputs:height", 224),
+                            ("rp_wrist.inputs:cameraPrim", camera_prim_path(C.WRIST_CAMERA, ROBOT_MODEL_PRIM_PATH, CAMERA_ENV_PATH)),
+                            ("rp_wrist.inputs:width", C.WRIST_CAMERA.width),
+                            ("rp_wrist.inputs:height", C.WRIST_CAMERA.height),
+                            ("rp_overhead.inputs:cameraPrim", camera_prim_path(C.OVERHEAD_CAMERA, ROBOT_MODEL_PRIM_PATH, CAMERA_ENV_PATH)),
+                            ("rp_overhead.inputs:width", C.OVERHEAD_CAMERA.width),
+                            ("rp_overhead.inputs:height", C.OVERHEAD_CAMERA.height),
                         ],
                         keys.CONNECT: [
                             ("tick.outputs:tick", "pub_joint.inputs:execIn"),
@@ -674,9 +504,9 @@ def spawn_object(obj_type: str, size: float, pos: tuple, color: tuple):
     _spawn_counter += 1
     prim_path = f"/World/SpawnedObjects/obj_{_spawn_counter:03d}"
 
-    common_rigid = sim_utils.RigidBodyPropertiesCfg(max_depenetration_velocity=1.0)
+    common_rigid = PhysxRigidBodyPropertiesCfg(max_depenetration_velocity=1.0)
     common_mass = sim_utils.MassPropertiesCfg(mass=0.05)
-    common_collision = sim_utils.CollisionPropertiesCfg()
+    common_collision = PhysxCollisionPropertiesCfg()
     common_visual = sim_utils.PreviewSurfaceCfg(diffuse_color=color)
 
     if obj_type == "Cube":
@@ -759,12 +589,12 @@ def _init_ros2_publishers():
         if not rclpy.ok():
             rclpy.init()
         node = rclpy.create_node("isaac_sim_ui_publisher")
-        _ros2_pub_prompt = node.create_publisher(StringMsg, "/vla/prompt", 10)
-        _ros2_pub_enabled = node.create_publisher(BoolMsg, "/vla/enabled", 10)
+        _ros2_pub_prompt = node.create_publisher(StringMsg, C.PROMPT_TOPIC, 10)
+        _ros2_pub_enabled = node.create_publisher(BoolMsg, C.ENABLED_TOPIC, 10)
         # Fallback publisher: publish joint states from Isaac Lab articulation data directly.
-        _ros2_pub_joint_states = node.create_publisher(JointStateMsg, "/joint_states", 10)
+        _ros2_pub_joint_states = node.create_publisher(JointStateMsg, C.JOINT_STATES_TOPIC, 10)
         # Reset helper: overwrite stale command targets latched by ROS2SubscribeJointState.
-        _ros2_pub_joint_commands = node.create_publisher(JointStateMsg, "/joint_commands", 10)
+        _ros2_pub_joint_commands = node.create_publisher(JointStateMsg, C.JOINT_COMMANDS_TOPIC, 10)
         print(
             "[INFO] ROS2 publishers for /vla/prompt, /vla/enabled, /joint_states, and /joint_commands created via rclpy.",
             flush=True,
@@ -821,8 +651,8 @@ def publish_joint_states(robot: Articulation, ros2_node):
         msg = JointStateMsg()
         msg.header.stamp = ros2_node.get_clock().now().to_msg()
         msg.name = list(SOARM_JOINT_NAMES)
-        msg.position = robot.data.joint_pos[0, :NUM_JOINTS].cpu().tolist()
-        msg.velocity = robot.data.joint_vel[0, :NUM_JOINTS].cpu().tolist()
+        msg.position = robot.data.joint_pos.torch[0, :NUM_JOINTS].cpu().tolist()
+        msg.velocity = robot.data.joint_vel.torch[0, :NUM_JOINTS].cpu().tolist()
         _ros2_pub_joint_states.publish(msg)
     except Exception:
         pass
@@ -897,8 +727,8 @@ class InteractiveControlPanel:
         # Hold current joint positions
         if self._robot is not None and self._robot.is_initialized:
             try:
-                current = self._robot.data.joint_pos
-                self._robot.set_joint_position_target(current)
+                current = self._robot.data.joint_pos.torch.clone()
+                self._robot.actuators.target_command.set_position_index(value=current)
             except Exception:
                 pass
 
@@ -911,10 +741,10 @@ class InteractiveControlPanel:
 
         if self._robot is not None and self._robot.is_initialized:
             try:
-                current = self._robot.data.joint_pos
-                self._robot.set_joint_position_target(current)
-                zeros = torch.zeros_like(self._robot.data.joint_vel)
-                self._robot.write_joint_state_to_sim(current, zeros)
+                current = self._robot.data.joint_pos.torch.clone()
+                self._robot.actuators.target_command.set_position_index(value=current)
+                zeros = torch.zeros_like(current)
+                self._robot.write_joint_state_to_sim_index(position=current, velocity=zeros)
             except Exception:
                 pass
 
@@ -930,8 +760,8 @@ class InteractiveControlPanel:
             try:
                 home = torch.zeros(1, NUM_JOINTS, device=self._robot.device)
                 zeros = torch.zeros(1, NUM_JOINTS, device=self._robot.device)
-                self._robot.write_joint_state_to_sim(home, zeros)
-                self._robot.set_joint_position_target(home)
+                self._robot.write_joint_state_to_sim_index(position=home, velocity=zeros)
+                self._robot.actuators.target_command.set_position_index(value=home)
                 # Also overwrite any stale ROS-side command target held by sub_joint_cmd.
                 publish_joint_command_reset([0.0] * NUM_JOINTS)
             except Exception:
@@ -966,13 +796,13 @@ class InteractiveControlPanel:
         # Telemetry
         if self._robot is not None and self._robot.is_initialized:
             try:
-                jpos = self._robot.data.joint_pos[0].cpu().numpy()
+                jpos = self._robot.data.joint_pos.torch[0].cpu().numpy()
                 for i, name in enumerate(SOARM_JOINT_NAMES):
                     if i < len(self._joint_labels):
                         self._joint_labels[i].text = f"  {name}: {jpos[i]:+.3f} rad"
 
-                ee_idx = self._robot.find_bodies(EE_BODY_NAME)[0][0]
-                ee_pos = self._robot.data.body_pos_w[0, ee_idx].cpu().numpy()
+                ee_idx = self._robot.find_bodies(C.EE_BODY_NAME)[0][0]
+                ee_pos = self._robot.data.body_pos_w.torch[0, ee_idx].cpu().numpy()
                 self._ee_label.text = f"  EE: ({ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}) m"
             except Exception:
                 pass
@@ -1155,18 +985,58 @@ class InteractiveControlPanel:
 # Main
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _snapshot(sim, robot, wrist_cam, overhead_cam, out_dir: str, joint_pos_spec: str):
+    """Hold each joint pose, render, save both camera images (test mode for the frame-diff check).
+
+    ``joint_pos_spec``: poses separated by ";", each 6 comma-separated joint positions (rad).
+    Pose i is saved to ``<out_dir>/pose<i>/{wrist,overhead}.{png,npy}``.
+    """
+    from PIL import Image
+    from isaaclab_physx.renderers.isaac_rtx_renderer_utils import ensure_isaac_rtx_render_update
+
+    for i, pose in enumerate(p for p in joint_pos_spec.split(";") if p.strip()):
+        q = torch.tensor([[float(v) for v in pose.split(",")]], device=robot.device)
+        zeros = torch.zeros_like(q)
+        for _ in range(30):
+            robot.write_joint_state_to_sim_index(position=q, velocity=zeros)
+            robot.actuators.target_command.set_position_index(value=q)
+            robot.write_data_to_sim()
+            sim.step(render=True)
+            ensure_isaac_rtx_render_update(force=True)
+            robot.update(sim.cfg.dt)
+            wrist_cam.update(sim.cfg.dt, force_recompute=True)
+            overhead_cam.update(sim.cfg.dt, force_recompute=True)
+        pose_dir = os.path.join(out_dir, f"pose{i}")
+        os.makedirs(pose_dir, exist_ok=True)
+        for spec, cam in ((C.WRIST_CAMERA, wrist_cam), (C.OVERHEAD_CAMERA, overhead_cam)):
+            img = cam.data.output["rgb"].torch[0, :, :, :3].cpu().numpy().astype(np.uint8)
+            np.save(f"{pose_dir}/{spec.name}.npy", img)
+            Image.fromarray(img).save(f"{pose_dir}/{spec.name}.png")
+        print(f"[INFO] Snapshot saved to {pose_dir}: joint_pos={robot.data.joint_pos.torch[0].cpu().tolist()}",
+              flush=True)
+
+
 def main():
     global _ros2_node
 
     livestream = os.environ.get("LIVESTREAM") in ("1", "2")
 
     # -- Simulation context --
-    sim_cfg = SimulationCfg(dt=1 / 120.0, render_interval=2, device="cpu")
+    # Contract timing and the envs' PhysX settings (incl. solve_articulation_contact_last, so grasps
+    # behave as in data collection). CPU physics for the OmniGraph articulation controller.
+    sim_cfg = SimulationCfg(
+        dt=C.PHYSICS_DT, render_interval=C.RENDER_INTERVAL, device="cpu", physics=make_physx_cfg()
+    )
     sim = SimulationContext(sim_cfg)
 
     # -- Build the scene --
     print("[INFO] Setting up scene (robot, cameras, lighting)...", flush=True)
     robot, wrist_cam, overhead_cam = _setup_scene(sim)
+    # The ROS camera render products (and a livestream viewport) render every frame, so PhysX must
+    # write body poses to Fabric every step. Isaac Lab 3.0 decides this when the SimulationContext
+    # is created (before any camera exists) and turns it off in headless runs, which froze the
+    # robot in the published camera images at its USD pose while the joints moved.
+    sim.set_setting("/physics/fabricUpdateTransformations", True)
 
     # -- Reset simulation --
     sim.reset()
@@ -1179,6 +1049,12 @@ def main():
     # Step once to ensure PhysX articulation is instantiated.
     sim.step()
     robot.update(sim.cfg.dt)
+    check_joint_limits(robot)
+
+    if args.snapshot is not None:
+        _snapshot(sim, robot, wrist_cam, overhead_cam, args.snapshot, args.snapshot_joint_pos)
+        simulation_app.close()
+        return
 
     # Ensure playback-based OmniGraph triggers (OnPlaybackTick) are active in standalone mode.
     try:
@@ -1220,15 +1096,24 @@ def main():
             f"  3. Click Connect.\n"
             f"  4. Use the 'VLA Interactive Test' panel on the right to send commands.\n"
             f"  5. To view through a camera: click the video/camera icon at the top of the\n"
-            f"     viewport and select 'overhead_cam' or 'wrist_cam' (under Robot > gripper_frame_link).\n",
+            f"     viewport and select 'overhead_cam' or 'wrist_cam' (under Robot > Geometry > ... > gripper_frame_link).\n",
             flush=True,
         )
+
+    # Isaac Lab 3.0 only pumps Kit (app.update) from a Kit visualizer (GUI / livestream) or when an
+    # Isaac Lab camera fetches data. The OmniGraph ROS 2 graph (joint pub/sub, articulation controller,
+    # camera helpers) and its render products only run inside app.update, so headless runs would
+    # publish no images and ignore /joint_commands. Pump Kit on render steps; this is a no-op when a
+    # Kit visualizer already does it.
+    from isaaclab_physx.renderers.isaac_rtx_renderer_utils import ensure_isaac_rtx_render_update
 
     # -- Main simulation loop --
     step_count = 0
     while simulation_app.is_running():
         sim.step()
         step_count += 1
+        if step_count % sim.cfg.render_interval == 0:
+            ensure_isaac_rtx_render_update(force=True)
 
         # Update robot data
         robot.update(sim.cfg.dt)

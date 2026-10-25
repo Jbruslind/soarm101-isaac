@@ -11,12 +11,13 @@ for robot communication.
 - **RAM**: 64 GB minimum, 256 GB recommended for CPU-offloaded training
 - **Disk**: 100 GB+ free (Isaac Sim container images are large)
 - **OS**: Ubuntu 22.04
-- **Driver**: NVIDIA 535.129.03+
+- **Driver**: NVIDIA 580.95.05+ (Isaac Sim 6.2; newer branches such as 615 work). See [Isaac versions](docs/ISAAC_VERSIONS.md)
 
 ## Quick Start
 
 ```bash
-# 0. Verify project structure
+# 0. Local config (gitignored), then verify project structure
+cp docker/.env.example docker/.env   # edit OPENPI_HOST, SUNSHINE_ALLOWED_SUBNETS, ...
 bash scripts/smoke_test.sh
 
 # 1. Download robot URDF + meshes, convert to USD
@@ -33,6 +34,10 @@ bash scripts/smoke_test.sh
 
 # 5. Interactively test the VLA via WebRTC streaming
 ./scripts/interactive_test.sh
+
+# 5b. Or watch any sim with a real GUI over Sunshine -> Moonlight
+./scripts/sunshine.sh up
+./scripts/collect_sim_data.sh --gui --episodes 5
 
 # 6. (Optional) Deploy inference to a cloud GPU
 ./scripts/deploy_cloud.sh user@gpu-server
@@ -73,11 +78,13 @@ detailed diagrams and data flow.
 ├── docker/                     Docker infrastructure
 │   ├── docker-compose.yml      Local stack (sim + ROS2 + optional GPU)
 │   ├── docker-compose.cloud.yml Remote GPU stack
-│   ├── .env                    Local configuration
+│   ├── .env.example            Local configuration template (copy to .env)
 │   ├── .env.cloud              Cloud configuration
 │   ├── isaac-sim/Dockerfile
 │   ├── openpi-server/Dockerfile + Caddyfile
 │   ├── ros2-bridge/Dockerfile
+│   ├── sunshine/               Headless Xorg + Sunshine (Moonlight host)
+│   ├── docker-compose.gui.yml  Isaac Sim GUI overlay (--gui)
 │   └── training/Dockerfile
 ├── robot_description/          URDF, meshes, USD assets
 ├── isaac_envs/                 Isaac Lab task environments
@@ -101,6 +108,7 @@ detailed diagrams and data flow.
 | `eval-local` | Isaac Sim + ROS2 + OpenPi | Evaluate with local GPU |
 | `eval-remote` | Isaac Sim + ROS2 | Evaluate with remote OpenPi |
 | `interactive` | Isaac Sim + ROS2 + OpenPi | Interactive VLA testing via WebRTC |
+| `gui` | Sunshine (headless X display + stream host) | Watch Isaac Sim GUI runs from Moonlight |
 | `deploy-local` | ROS2 + OpenPi | Real robot, local inference |
 | `deploy-remote` | ROS2 | Real robot, remote inference |
 
@@ -112,14 +120,18 @@ compatible containers run simultaneously.
 | Document | Description |
 |----------|-------------|
 | **[Quick Start](docs/QUICKSTART.md)** | Step-by-step setup and first run |
+| **[Tutorials](docs/tutorials/README.md)** | Prompted, runnable tutorials (start with F0: setup and Moonlight streaming) |
+| **[Isaac Versions](docs/ISAAC_VERSIONS.md)** | Isaac Sim 6.2 / Isaac Lab 3.0 pin, driver compatibility, 3.0 API conventions |
 | **[Full Example](docs/FULL_EXAMPLE.md)** | Complete end-to-end walkthrough with expected output |
 | **[Architecture](docs/ARCHITECTURE.md)** | System diagrams, data flows, container details, file map |
 | **[Data Pipeline](docs/DATA_PIPELINE.md)** | LeRobot v3.0 format, collection, normalization |
 | **[Training Guide](docs/OPENPI_TRAINING.md)** | OpenPi fine-tuning, memory budget, config reference |
+| **[LeRobot Training](docs/LEROBOT_TRAINING.md)** | SmolVLA / ACT fine-tuning on the 12 GB GPU: container, wrapper, VRAM/throughput table |
 | **[Isaac Sim Environments](docs/ISAAC_SIM_ENVIRONMENTS.md)** | Reach and pick tasks, observation/action spaces |
 | **[ROS2 Bridge](docs/ROS2_BRIDGE.md)** | VLA bridge node, topics, action chunking |
 | **[Remote Deployment](docs/REMOTE_DEPLOYMENT.md)** | Cloud GPU setup, TLS, data sync, latency |
 | **[Interactive Inference](docs/INTERACTIVE_INFERENCE.md)** | Interactive VLA testing with WebRTC streaming |
+| **[Sunshine Streaming](docs/SUNSHINE_STREAMING.md)** | Headless vs GUI Isaac Sim, streamed to Moonlight clients |
 | **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common errors and solutions |
 | **[Real-to-Sim Plan](docs/REAL2SIM.md)** | Planned scanned scenes, simulated D455, Isaac Sim 6.1 migration |
 | **[Cameras](docs/CAMERAS.md)** | Overhead D455 + wrist USB webcam: real setup, Isaac Lab 3.0 camera config, calibration, sim-to-real best practices |
@@ -134,13 +146,15 @@ compatible containers run simultaneously.
 | `scripts/train.sh` | LoRA fine-tuning (local or remote) |
 | `scripts/eval_sim.sh` | Closed-loop simulation evaluation |
 | `scripts/deploy_real.sh` | Deploy to real robot |
-| `scripts/interactive_test.sh` | Interactive VLA inference via WebRTC |
+| `scripts/interactive_test.sh` | Interactive VLA inference via WebRTC (or `--gui`) |
+| `scripts/sunshine.sh` | Start/stop the Sunshine display + Moonlight host container |
+| `scripts/isaac.sh` | Run any Isaac Sim / Isaac Lab command `--headless` or `--gui` |
 | `scripts/deploy_cloud.sh` | Deploy GPU stack to remote machine |
 | `scripts/sync_data.sh` | Sync episodes and checkpoints with remote |
 
 ## Key Technologies
 
-- **[NVIDIA Isaac Sim 5.1](https://developer.nvidia.com/isaac-sim)** -- High-fidelity physics simulation with RTX rendering
+- **[NVIDIA Isaac Sim 6.2](https://developer.nvidia.com/isaac-sim) + Isaac Lab 3.0** -- High-fidelity physics simulation with RTX rendering
 - **[Isaac Lab](https://isaac-sim.github.io/IsaacLab/)** -- Gymnasium-compatible RL/IL environments for Isaac Sim
 - **[OpenPi](https://github.com/Physical-Intelligence/openpi)** -- pi0 / pi0-FAST VLA model training and serving
 - **[LeRobot v3.0](https://huggingface.co/docs/lerobot)** -- Standardized robot learning dataset format

@@ -60,7 +60,7 @@ This downloads:
 - `robot_description/urdf/soarm101.urdf` -- Main URDF
 - `robot_description/meshes/*.stl` -- 13 mesh files
 - `robot_description/urdf/soarm101_isaacsim.urdf` -- Isaac Sim variant
-- `robot_description/usd/soarm101.usd` -- USD asset (converted from URDF)
+- `robot_description/usd/soarm101/soarm101.usda` (+ `payloads/`) -- USD asset (converted from URDF, committed)
 
 ### 1.4 Build Docker Images
 
@@ -228,7 +228,7 @@ What happens:
    b. Builds observation dict
    c. Sends to OpenPi server via WebSocket
    d. Receives action chunk
-   e. Publishes joint commands at 10 Hz
+   e. Publishes joint commands at 30 Hz
 3. Isaac Sim executes the commanded joint positions
 4. Loop continues until stopped (Ctrl+C)
 ```

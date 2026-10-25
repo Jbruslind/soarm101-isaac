@@ -6,13 +6,14 @@
 #
 # Usage: ./scripts/run_isaac_sim_gui.sh
 # Then inside the container: bash runheadless.sh -v
-# Optional: ISAAC_SIM_TAG=5.1.0 (default).
+# Optional: ISAAC_SIM_TAG=<tag> (default: ISAACSIM_VERSION from docker/.env, else 6.2.0.1).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 CACHE_DIR="${ISAAC_SIM_CACHE_DIR:-$PROJECT_DIR/.cache/isaac-sim}"
-ISAAC_TAG="${ISAAC_SIM_TAG:-5.1.0}"
+ISAAC_TAG="${ISAAC_SIM_TAG:-$(sed -n "s/^ISAACSIM_VERSION=//p" "$PROJECT_DIR/docker/.env" 2>/dev/null | tail -1)}"
+ISAAC_TAG="${ISAAC_TAG:-6.2.0.1}"
 
 # Official layout: cache/main (ov, warp), computecache, config, data, logs, pkg (see install_container.html).
 mkdir -p "$CACHE_DIR"/cache/main/{ov,warp} \

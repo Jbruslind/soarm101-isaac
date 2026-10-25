@@ -34,3 +34,35 @@ ros2_ws/install/
 ros2_ws/log/
 
 *.usd
+# The robot asset is committed (regenerate with scripts/setup_robot_usd.sh)
+!robot_description/usd/soarm101/payloads/geometries.usd
+
+# Local config and secrets (copy docker/.env.example -> docker/.env)
+docker/.env
+.env
+*.env.local
+!docker/.env.example
+.cursor/*
+!.cursor/.gitkeep
+*.pem
+*.key
+*.crt
+credentials*.json
+sunshine_state.json
+.netrc
+
+# Crash dumps / shell / colcon env dumps
+*.dmp
+core.*
+.bash_history
+*.sh.env
+robot_description/urdf/soarm101_isaacsim/
+
+# LeRobot training outputs (scripts/train_lerobot.sh)
+data/checkpoints/
+
+# Fastener drop-test output (isaac_envs/assets/fastener_drop_test.py)
+data/fastener_drop/
+
+# Tutorial outputs and exercise copies (docs/tutorials/)
+data/tutorials/

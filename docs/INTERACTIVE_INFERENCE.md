@@ -203,12 +203,16 @@ Both cameras match the LeRobot / ALOHA / OpenPi standard:
 |---|---|
 | Resolution | 224 x 224 |
 | Frame rate | 30 Hz |
-| FOV | ~60 degrees |
+| FOV | 69 degrees horizontal |
 | Focal length | 1.93 mm |
 | Horizontal aperture | 2.65 mm |
 
-The wrist camera is attached to `gripper_frame_link` with offset `(-0.03, 0.05, -0.09)`.
-The overhead camera is authored with world transform `(0.1, 0.0, 0.8)` and Euler `(0, -20, 0)`.
+Both cameras are the ones used for data collection, defined once in
+`isaac_envs/soarm_common/contract.py` (`WRIST_CAMERA`, `OVERHEAD_CAMERA`): the wrist camera sits
+beside the gripper under `gripper_frame_link` at `(0.02, 0.04, -0.07)` m aimed between the jaws;
+the overhead camera is at world `(0.45, 0.40, 0.30)` looking at `(0.19, 0, 0.03)`. See
+docs/CONFIG_ALIGNMENT.md. `--snapshot DIR --snapshot-joint-pos "q0,...,q5"` renders both cameras
+at given joint poses and exits (used for the collector-vs-inference frame-diff check).
 
 ---
 
@@ -226,6 +230,21 @@ To use a model from a different framework, replace the `openpi-server`
 container with your own inference server that speaks the same WebSocket
 protocol (see `ros2_ws/src/soarm_vla_bridge/soarm_vla_bridge/observation_builder.py`
 for the observation format).
+
+### Testing without a model
+
+`scripts/mock_policy_server.py` is a stand-in policy server that speaks the OpenPi
+websocket protocol and returns a slow sinusoid of joint targets (`(10, 6)` chunks), so the
+whole loop (cameras, ROS 2 graph, bridge, `/joint_commands`, arm motion) can be checked
+without a GPU model. It logs each observation it receives, including per-camera image
+mean/std (a mean near 0 or a std near 0 means a blank or featureless frame).
+
+```bash
+docker run --rm --network host -v "$PWD/scripts:/scripts:ro" \
+    -v "$PWD/isaac_envs/soarm_common:/opt/soarm/soarm_common:ro" --entrypoint python3 \
+    soarm-ros2 /scripts/mock_policy_server.py --port 8000
+./scripts/interactive_test.sh --remote 127.0.0.1 --port 8000
+```
 
 ---
 

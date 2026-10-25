@@ -44,7 +44,8 @@ echo "1. Checking project structure..."
 check "README.md exists" test -f "$PROJECT_DIR/README.md"
 check "docker-compose.yml exists" test -f "$PROJECT_DIR/docker/docker-compose.yml"
 check "docker-compose.cloud.yml exists" test -f "$PROJECT_DIR/docker/docker-compose.cloud.yml"
-check ".env exists" test -f "$PROJECT_DIR/docker/.env"
+check ".env.example exists" test -f "$PROJECT_DIR/docker/.env.example"
+check ".env exists (cp docker/.env.example docker/.env)" test -f "$PROJECT_DIR/docker/.env"
 check ".env.cloud exists" test -f "$PROJECT_DIR/docker/.env.cloud"
 check "Isaac Sim Dockerfile" test -f "$PROJECT_DIR/docker/isaac-sim/Dockerfile"
 check "OpenPi Dockerfile" test -f "$PROJECT_DIR/docker/openpi-server/Dockerfile"
@@ -67,7 +68,8 @@ check "Train LoRA script" test -f "$PROJECT_DIR/training/scripts/train_lora.py"
 echo ""
 echo "2. Checking script permissions..."
 for script in setup_robot_usd.sh collect_sim_data.sh train.sh eval_sim.sh \
-              deploy_real.sh deploy_cloud.sh sync_data.sh smoke_test.sh; do
+              deploy_real.sh deploy_cloud.sh sync_data.sh smoke_test.sh \
+              sunshine.sh isaac.sh check_tutorials.sh; do
     check "$script is executable" test -x "$PROJECT_DIR/scripts/$script"
 done
 
@@ -144,11 +146,17 @@ echo ""
 echo "7. Checking Python imports..."
 check "observation_builder imports" python3 -c "
 import sys; sys.path.insert(0, '$PROJECT_DIR/ros2_ws/src/soarm_vla_bridge')
-from soarm_vla_bridge.observation_builder import build_observation, SOARM_JOINT_NAMES
+from soarm_vla_bridge.observation_builder import build_observation, SOARM_JOINT_NAMES, IMAGE_SIZE
 import numpy as np
-obs = build_observation({'shoulder_pan': 0.1}, np.zeros((224,224,3), dtype=np.uint8))
+obs = build_observation({SOARM_JOINT_NAMES[0]: 0.1}, np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8))
 assert 'state' in obs and 'images' in obs
 "
+check "soarm_common contract imports without Isaac" python3 "$PROJECT_DIR/isaac_envs/soarm_common/contract.py"
+
+# --- 8. Tutorials ---
+echo ""
+echo "8. Checking tutorials (scripts compile, links, snippets)..."
+check "check_tutorials.sh passes" "$SCRIPT_DIR/check_tutorials.sh"
 
 # Cleanup
 rm -rf "$TEST_DATA_DIR"

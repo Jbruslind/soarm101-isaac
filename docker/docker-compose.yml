@@ -8,7 +8,10 @@ services:
     build:
       context: ./isaac-sim
       dockerfile: Dockerfile
-    image: soarm-isaac-sim
+      args:
+        ISAACSIM_VERSION: ${ISAACSIM_VERSION:-6.2.0.1}
+        ISAACLAB_REF: ${ISAACLAB_REF:-70ab24fec3eabf51222817db0cdb5a4e7133bd7e}
+    image: soarm-isaac-sim:${ISAACSIM_VERSION:-6.2.0.1}
     container_name: soarm-isaac-sim
     tty: true
     stdin_open: true
@@ -24,11 +27,14 @@ services:
       - PUBLIC_IP=${PUBLIC_IP:-127.0.0.1}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/usr/local/share/middleware_profiles/rtps_udp_profile.xml
+      # UDP-only Fast DDS, matching ros2-bridge / phospho-bridge (no shared memory across
+      # containers). The 5.x image's rtps_udp_profile.xml is not shipped in 6.2.
+      - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
       - ISAAC_SIM_HEADLESS=${ISAAC_SIM_HEADLESS:-1}
     volumes:
       - ../robot_description:/robot_description:ro
       - ../isaac_envs:/isaac_envs:ro
+      - ../tutorials:/tutorials:ro   # tutorial scripts (docs/tutorials/)
       - ../data:/data:rw
       - ../.cursor:/.cursor:rw
       - vla_signals:/tmp/vla_signals
@@ -69,6 +75,8 @@ services:
     volumes:
       - ../models:/models:ro
       - ../training/configs:/app/openpi/src/openpi/training/configs_custom:ro
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
     deploy:
       resources:
         reservations:
@@ -96,13 +104,15 @@ services:
       - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
-      # Isaac Sim sets FASTRTPS_DEFAULT_PROFILES_FILE to UDP-only. The default Fast DDS
+      # Isaac Sim runs Fast DDS UDP-only (FASTDDS_BUILTIN_TRANSPORTS above). The default Fast DDS
       # stack may otherwise use shared memory for localhost peers; Isaac's subscriber
       # then never sees /joint_commands. Force UDP so bridge ↔ Sim discovery matches.
       - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
     volumes:
       - ../robot_description:/robot_description:ro
       - ../ros2_ws:/ros2_ws:rw
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
       - vla_signals:/tmp/vla_signals:ro
     command: ["ros2", "run", "soarm_vla_bridge", "vla_bridge"]
     restart: "no"
@@ -129,7 +139,62 @@ services:
       - PHOSPHO_BRIDGE_LOG_LEVEL=${PHOSPHO_BRIDGE_LOG_LEVEL:-INFO}
       - PHOSPHO_ROS_EXECUTOR_THREADS=${PHOSPHO_ROS_EXECUTOR_THREADS:-4}
       - PHOSPHO_CAM_MIN_INTERVAL_SEC=${PHOSPHO_CAM_MIN_INTERVAL_SEC:-0.04}
+    volumes:
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
     restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Sunshine: headless NVIDIA X display + Moonlight game-stream host
+  # Long-running; start once with ./scripts/sunshine.sh up. Isaac Sim launched
+  # with --gui (docker-compose.gui.yml) draws its window on this display.
+  # See docs/SUNSHINE_STREAMING.md.
+  # ---------------------------------------------------------------------------
+  sunshine:
+    profiles: ["gui"]
+    build:
+      context: ./sunshine
+      dockerfile: Dockerfile
+      args:
+        SUNSHINE_VERSION: ${SUNSHINE_VERSION:-2026.914.233613}
+    image: soarm-sunshine
+    container_name: soarm-sunshine
+    runtime: nvidia
+    network_mode: host
+    ipc: host
+    tty: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - DISPLAY=${SOARM_DISPLAY:-:0}
+      - DISPLAY_WIDTH=${SUNSHINE_DISPLAY_WIDTH:-1920}
+      - DISPLAY_HEIGHT=${SUNSHINE_DISPLAY_HEIGHT:-1080}
+      - DISPLAY_REFRESH=${SUNSHINE_DISPLAY_REFRESH:-60}
+      - NVIDIA_OUTPUT=${SUNSHINE_NVIDIA_OUTPUT:-DFP-0}
+      - SUNSHINE_NAME=${SUNSHINE_NAME:-soarm-isaac}
+      - SUNSHINE_USER=${SUNSHINE_USER:-}
+      - SUNSHINE_PASS=${SUNSHINE_PASS:-}
+      - SUNSHINE_CSRF_ORIGINS=${SUNSHINE_CSRF_ORIGINS:-}
+    # Moonlight input: Sunshine creates uinput devices; the host's udev publishes them
+    # under /dev/input, which Xorg in this container picks up via /run/udev.
+    devices:
+      - /dev/uinput:/dev/uinput
+    device_cgroup_rules:
+      - "c 13:* rmw"
+    volumes:
+      - x11-unix:/tmp/.X11-unix
+      - /dev/input:/dev/input
+      - /run/udev:/run/udev:ro
+      - sunshine-config:/root/.config/sunshine
+      - sunshine-xorg-modules:/var/cache/nvidia-xorg
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Training: LoRA/QLoRA fine-tuning of pi0/pi0-FAST
@@ -154,7 +219,46 @@ services:
       - ../data:/data:ro
       - ../models:/models:rw
       - ../training:/training:ro
+      # Shared robot/camera/control contract (isaac_envs/soarm_common), found at /opt/soarm
+      - ../isaac_envs/soarm_common:/opt/soarm/soarm_common:ro
     shm_size: "16g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # LeRobot: SmolVLA / ACT fine-tuning and offline inference (lerobot 0.6.1)
+  # Use scripts/train_lerobot.sh. Needs the whole 12 GB GPU: stop Isaac Sim first.
+  # See docs/LEROBOT_TRAINING.md.
+  # ---------------------------------------------------------------------------
+  lerobot:
+    profiles: ["train-lerobot"]
+    build:
+      context: ./lerobot
+      dockerfile: Dockerfile
+      args:
+        LEROBOT_VERSION: ${LEROBOT_VERSION:-0.6.1}
+    image: soarm-lerobot:${LEROBOT_VERSION:-0.6.1}
+    container_name: soarm-lerobot
+    runtime: nvidia
+    # Run as the host user so checkpoints under data/ are not root-owned.
+    user: "${SOARM_UID:-1000}:${SOARM_GID:-1000}"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - SOARM_LOGGER=${SOARM_LOGGER:-tensorboard}
+      - PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-expandable_segments:True}
+    volumes:
+      - ../data:/workspace/data:rw
+      - lerobot-hf-cache:/hf-cache
+    # DataLoader workers pass decoded frames through shared memory.
+    shm_size: "16g"
+    working_dir: /workspace
     deploy:
       resources:
         reservations:
@@ -171,4 +275,8 @@ volumes:
   isaac-cache-glcache:
   isaac-cache-compute:
   isaac-logs:
+  x11-unix:     # X server socket shared between sunshine and isaac-sim --gui
+  sunshine-config:
+  sunshine-xorg-modules:
+  lerobot-hf-cache:  # HF hub + LeRobot dataset cache (models, datasets) for the lerobot service
   vla_signals:  # shared so bridge can read prompt/enabled when Isaac Sim has no ROS2

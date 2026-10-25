@@ -1,9 +1,16 @@
 #!/bin/bash
-# Order matters: Isaac Sim ships Jazzy rosidl_generator_py *.so under the ROS2 bridge extension.
+# Order matters: Isaac Sim ships Jazzy rosidl_generator_py *.so under its ROS 2 extension.
 # If /opt/ros/jazzy/lib appears first, the linker loads Debian-built *.so while Python uses
 # bridge-bundled msg classes → asserts in rcl_interfaces__msg__*_convert_from_py (core dump).
 
-_BRIDGE_JAZZY_LIB="/isaac-sim/exts/isaacsim.ros2.bridge/jazzy/lib"
+# Isaac Sim 6.x: isaacsim.ros2.core; 5.x: isaacsim.ros2.bridge.
+_BRIDGE_JAZZY_LIB=""
+for _d in /isaac-sim/exts/isaacsim.ros2.core/jazzy/lib /isaac-sim/exts/isaacsim.ros2.bridge/jazzy/lib; do
+    if [ -d "$_d" ]; then
+        _BRIDGE_JAZZY_LIB="$_d"
+        break
+    fi
+done
 _ROS_SYS_LIB=""
 for _distro in jazzy humble; do
     if [ -d "/opt/ros/${_distro}/lib" ]; then
@@ -36,7 +43,7 @@ fi
 
 _inherit="${LD_LIBRARY_PATH:-}"
 _new_ld=""
-if [ -d "$_BRIDGE_JAZZY_LIB" ]; then
+if [ -n "$_BRIDGE_JAZZY_LIB" ]; then
     _new_ld="$_BRIDGE_JAZZY_LIB"
 fi
 if [ -n "$_ROS_SYS_LIB" ]; then
