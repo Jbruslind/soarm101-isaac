@@ -99,7 +99,7 @@ All frame and quaternion conversion goes through `rgbdkit.conventions`, which ha
     directly.
   - If images go through the observation manager, use `mdp.image_rgb(normalize=False)`. Its default
     `normalize=True` subtracts the per-image mean, which a VLA should not get.
-- **VRAM on a 10 GB RTX 3080.** Use `num_envs=1` for scripted collection, with exactly two cameras
+- **VRAM on a 10 GB GPU.** Use `num_envs=1` for scripted collection, with exactly two cameras
   at native resolution. Drop the debug third-person camera from collection. Raise to 4-16 envs
   only after watching memory.
 
@@ -267,7 +267,7 @@ here, then measure.
 10. Leave the 224 resize to OpenPi's `resize_with_pad`. Use uint8 images with `normalize=False`.
 11. Randomise lighting first, then mount pose, then FOV, then surfaces.
 12. Add a 2-4 frame randomised observation delay matching the measured USB latency.
-13. Use `num_envs=1` for scripted collection on the 3080, with two cameras only.
+13. Use `num_envs=1` for scripted collection on a 10 GB GPU, with two cameras only.
 
 ## Sources
 

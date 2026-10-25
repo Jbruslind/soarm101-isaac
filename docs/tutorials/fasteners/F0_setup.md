@@ -21,7 +21,7 @@ both tracks.
 
 ## Prerequisites
 
-- Linux host with an NVIDIA RTX GPU (12 GB is enough) and driver ≥ 580.95.05
+- Linux host with an NVIDIA RTX GPU (the reference runs use a 12 GB card) and driver ≥ 580.95.05
   ([ISAAC_VERSIONS.md](../../ISAAC_VERSIONS.md) lists tested drivers).
 - Docker Engine ≥ 26 with Compose v2 and the NVIDIA Container Toolkit; your user can run
   `docker` (member of the `docker` group).
@@ -272,13 +272,13 @@ whenever you just want to look at the arm.
 ## Expected output
 
 **Log.** Kit prints a lot. Filter with `2>&1 | grep '\[F0\]'`. On the reference machine
-(RTX A2000 12 GB, headless):
+(12 GB reference GPU, headless; your `gpu=` and `vram_gb=` show your card):
 
 ```text
-[F0] isaac_sim_build=6.2.0-rc.15 isaaclab_ext=28.0.0 gpu=NVIDIA_RTX_A2000_12GB vram_gb=11.7
+[F0] isaac_sim_build=6.2.0-rc.15 isaaclab_ext=28.0.0 gpu=<your_GPU> vram_gb=11.7
 [F0] reach env built: num_envs=1 device=cuda:0 obs=(1, 15) actions=6
 [F0] shoulder_pan travel after 20 steps: +0.487 rad (need >= 0.30)
-[F0] PASS isaac_sim=6.2.0 isaac_lab=3.0.0 gpu=NVIDIA_RTX_A2000_12GB pan_travel=0.487rad steps_per_s=83.4 mode=headless
+[F0] PASS isaac_sim=6.2.0 isaac_lab=3.0.0 gpu=<your_GPU> pan_travel=0.487rad steps_per_s=83.4 mode=headless
 ```
 
 The 6.2.0.1 image's `VERSION` file says `6.2.0-rc.15`. That is expected.
@@ -292,7 +292,7 @@ one side (the motion check), then the arm twitches under random actions.
 ![F0 in GUI mode: the SO-ARM101 reach env in Isaac Sim, seen through Moonlight](../images/F0_reach_moonlight.jpg)
 
 In GUI mode the PASS line ends with `mode=gui`, for example
-`[F0] PASS isaac_sim=6.2.0 isaac_lab=3.0.0 gpu=NVIDIA_RTX_A2000_12GB pan_travel=0.487rad steps_per_s=7.5 mode=gui`.
+`[F0] PASS isaac_sim=6.2.0 isaac_lab=3.0.0 gpu=<your_GPU> pan_travel=0.487rad steps_per_s=7.5 mode=gui`.
 
 **Checkpoint.** You are done with F0 when:
 
@@ -321,7 +321,7 @@ In GUI mode the PASS line ends with `mode=gui`, for example
    <details><summary>Answer</summary>
 
    Headless is faster. With a window, Kit also renders the viewport and Sunshine encodes it
-   for Moonlight. Expect a clear drop in GUI mode: on the reference RTX A2000 12 GB at 1920×1080, headless ran
+   for Moonlight. Expect a clear drop in GUI mode: on the 12 GB reference GPU at 1920×1080, headless ran
    83.4 steps/s and GUI 7.5 steps/s, about 11× slower. The exact ratio depends on GPU and
    resolution. Keep these two numbers: F8 builds a full VRAM/FPS table from them. Use GUI to
    look and headless to produce data.
@@ -379,7 +379,7 @@ In GUI mode the PASS line ends with `mode=gui`, for example
 | `[F0] FAIL ... pan_travel=0.000rad` | The robot ignores actions or did not load. Check that `robot_description/usd/soarm101/soarm101.usda` exists (`./scripts/setup_robot_usd.sh`) and look for errors above the `[F0]` lines. |
 | PASS says `mode=headless` but you used `--gui` | The window needs `HEADLESS=0`. Make sure `--gui` comes *before* the command: `./scripts/isaac.sh --gui /isaac-sim/python.sh ...`. |
 | Moonlight shows video but mouse/keyboard do nothing | `/dev/uinput` missing on the host: `sudo modprobe uinput`. |
-| CUDA out of memory | Another job is using the 12 GB GPU (training, another sim). `nvidia-smi`, stop it, retry. |
+| CUDA out of memory | Another job is using the GPU (training, another sim). `nvidia-smi`, stop it, retry. |
 
 More: [TROUBLESHOOTING.md](../../TROUBLESHOOTING.md), [ERRORS_AND_SOLUTIONS.md](../../ERRORS_AND_SOLUTIONS.md).
 

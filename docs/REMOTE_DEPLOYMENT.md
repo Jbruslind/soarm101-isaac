@@ -21,7 +21,7 @@ while keeping Isaac Sim and the ROS2 bridge running locally.
 ```mermaid
 graph LR
     subgraph localNet ["Your Machine"]
-        IS["Isaac Sim\n(3080 Ti)"]
+        IS["Isaac Sim\n(local GPU)"]
         ROS["ROS2 Bridge"]
     end
     subgraph internet ["Network"]

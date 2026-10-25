@@ -12,7 +12,7 @@ on the **same machine** (Mode A) or on **separate machines** (Mode B).
 
 ```mermaid
 graph TD
-    subgraph localMachine ["Local Machine  --  3080 Ti + 256 GB RAM"]
+    subgraph localMachine ["Local Machine  --  local GPU + 256 GB RAM"]
         IsaacSim["Isaac Lab\nsoarm-isaac-sim (docker/isaac-sim)\n- Isaac Sim 6.2 + Isaac Lab 3.0\n- Physics sim (PhysX 5)\n- RTX camera rendering\n- Headless episode generation"]
         ROS2["ROS2 Bridge\nros:humble-ros-base\n- VLA Bridge Node\n- Joint state / camera subscribers\n- Action publisher"]
         DataVol["data/episodes/\nLeRobot v3.0\nParquet + MP4 + JSON"]
@@ -50,7 +50,7 @@ cannot coexist in 12 GB of VRAM simultaneously.
 
 ```mermaid
 graph LR
-    subgraph singleBox ["Single Machine  --  RTX 3080 Ti"]
+    subgraph singleBox ["Single Machine  --  local GPU"]
         direction TB
         IS["Isaac Sim"]
         OP["OpenPi Server"]
@@ -75,7 +75,7 @@ connected via WebSocket over the network.
 
 ```mermaid
 graph LR
-    subgraph local ["Local  --  3080 Ti"]
+    subgraph local ["Local  --  local GPU"]
         IS2["Isaac Sim"]
         R22["ROS2 Bridge"]
     end

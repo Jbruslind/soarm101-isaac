@@ -290,7 +290,7 @@ on IK-Rel directly, or `swap` it first, as above.
 - [ ] `[F5] PASS successes=5` on `teleop.hdf5`
 - [ ] `Successfully replayed: 50/50` on IK-Abs **and** on JointAbs
 
-Our run on an RTX A2000 12 GB:
+Our reference run (12 GB GPU):
 
 | Check | Result |
 |---|---|

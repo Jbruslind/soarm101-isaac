@@ -8,7 +8,7 @@ collection, training, evaluation, and remote deployment.
 ## Scenario
 
 You have:
-- A local machine with an RTX 3080 Ti and 256 GB RAM
+- A local machine with an NVIDIA RTX GPU and 256 GB RAM
 - (Optional) A cloud GPU instance for faster training/inference
 - No physical robot yet (simulation only)
 
@@ -157,7 +157,7 @@ cat docker/.env
 # TRAINING_QUANTIZE_BASE=true
 ```
 
-These settings are optimized for the 3080 Ti (12 GB VRAM):
+These settings are an example for a 12 GB GPU:
 - QLoRA (4-bit quantized base model)
 - Effective batch size of 8 (1 x 8 gradient accumulation)
 - LoRA rank 32
@@ -197,7 +197,7 @@ Step 5000/5000 | loss: 0.42 | lr: 1e-5
 Training complete. Checkpoint saved.
 ```
 
-Training time on 3080 Ti: approximately 2-6 hours depending on dataset size.
+Training time on a 12 GB GPU: approximately 2-6 hours depending on dataset size.
 
 ### 3.3 Verify Checkpoint
 
@@ -372,7 +372,7 @@ graph TD
 
     subgraph train ["Phase 3: Training"]
         C1["Configure LoRA params"]
-        C2["Run training\n(2-6 hrs on 3080 Ti)"]
+        C2["Run training\n(2-6 hrs on a 12 GB GPU)"]
         C3["Verify checkpoint"]
         C1 --> C2 --> C3
     end
@@ -409,7 +409,7 @@ graph TD
 | Robot asset download | 2 min | Depends on network |
 | Collect 100 episodes | 10-20 min | Headless Isaac Sim |
 | Compute norm stats | < 1 min | |
-| Train 5000 steps (local) | 2-6 hrs | 3080 Ti with QLoRA |
+| Train 5000 steps (local) | 2-6 hrs | 12 GB GPU with QLoRA |
 | Train 5000 steps (cloud A100) | 30-60 min | Full precision LoRA |
 | Evaluation session | Continuous | Until Ctrl+C |
 | Cloud deployment | 5-10 min | Build + start on remote |

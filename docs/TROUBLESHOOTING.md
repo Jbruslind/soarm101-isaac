@@ -51,7 +51,7 @@ docker login nvcr.io
 
 ### Out of GPU memory (OOM)
 
-The 3080 Ti has 12 GB.  You cannot run multiple GPU-heavy containers
+On a 12 GB card you cannot run multiple GPU-heavy containers
 simultaneously.  Use docker-compose profiles:
 
 ```bash
@@ -258,10 +258,10 @@ The base model doesn't fit in VRAM.  Solutions:
 
 ## Training
 
-### Training is extremely slow on 3080 Ti
+### Training is extremely slow on a 12 GB GPU
 
-Expected behavior with QLoRA + CPU offloading.  The 3080 Ti is a
-development/prototyping GPU, not a training GPU.  For faster training:
+Expected behavior with QLoRA + CPU offloading.  A 12 GB card is a
+development/prototyping GPU for this path, not a training GPU.  For faster training:
 
 1. Reduce dataset size for debugging (`--episodes 10`)
 2. Reduce `max_steps` to 1000 for smoke tests

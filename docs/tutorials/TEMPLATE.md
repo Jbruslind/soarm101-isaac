@@ -99,7 +99,7 @@ Run from the repository root. Both modes run the same script.
 ```
 
 <Arguments the learner will change: `--flag` (default, meaning).>
-<Expected wall time on a 12 GB RTX card, and that the first Kit start takes 2–5 min.>
+<Expected wall time on the reference GPU (say how it scales), and that the first Kit start takes 2–5 min.>
 
 ## Expected output
 

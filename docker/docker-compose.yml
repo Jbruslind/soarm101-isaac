@@ -233,7 +233,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # LeRobot: SmolVLA / ACT fine-tuning and offline inference (lerobot 0.6.1)
-  # Use scripts/train_lerobot.sh. Needs the whole 12 GB GPU: stop Isaac Sim first.
+  # Use scripts/train_lerobot.sh: it sizes the batch to the free GPU memory (scripts/_gpu.sh).
   # See docs/LEROBOT_TRAINING.md.
   # ---------------------------------------------------------------------------
   lerobot:
