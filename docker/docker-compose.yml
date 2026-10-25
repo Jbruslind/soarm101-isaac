@@ -256,6 +256,11 @@ services:
     volumes:
       - ../data:/workspace/data:rw
       - lerobot-hf-cache:/hf-cache
+      # HDF5 -> LeRobot conversion (training/scripts/hdf5_to_lerobot.py) reads the demo schema
+      # (isaac_envs/soarm_tasks/demo_schema.py) and the contract (isaac_envs/soarm_common).
+      - ../isaac_envs:/isaac_envs:ro
+      - ../training:/training:ro
+      - ../tutorials:/tutorials:ro   # tutorial scripts (docs/tutorials/)
     # DataLoader workers pass decoded frames through shared memory.
     shm_size: "16g"
     working_dir: /workspace

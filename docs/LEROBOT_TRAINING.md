@@ -23,7 +23,18 @@ runs out of memory.
 | Logging | TensorBoard (`docker/lerobot/lerobot_train_tb.py`, see below) |
 
 lerobot 0.6.1 caps torch at `<2.12`, so the base image stays on torch 2.11. Driver 570 or
-newer runs the cu128 wheels. This host's 615 driver is fine.
+newer runs the cu128 wheels. This host's 615 driver is fine. The image also has h5py 3.14 for
+the HDF5 -> LeRobot conversion ([DATA_PIPELINE.md](DATA_PIPELINE.md)).
+
+> **Renamed in lerobot 0.6 (vs 0.5.x).** Older guides and snippets break on these:
+>
+> | 0.5.x | 0.6.x |
+> |---|---|
+> | `pip install lerobot` brought `wandb` and `accelerate` | training deps moved to the **`lerobot[training]`** extra (`lerobot[dataset]` + `wandb` + `accelerate`); install `lerobot[training]` (this image: `lerobot[smolvla,training]`) or `lerobot-train` fails on import |
+> | `--eval_freq` | **`--env_eval_freq`** (sim rollouts every N steps, default 20000, 0 = off; ignored without `--env.type`). `--eval_steps` is a separate, new held-out *loss* evaluation |
+> | `from lerobot.types import ...` (`TransitionKey`, `RobotObservation`, `PolicyAction`, ...) | **`from lerobot.lerobot_types import ...`** |
+>
+> Checked against the 0.5.1 and 0.6.1 wheels (`configs/train.py`, package metadata, module list).
 
 Files:
 
@@ -105,10 +116,22 @@ docker compose --profile train-lerobot run --rm -p 127.0.0.1:6006:6006 -e NVIDIA
 ### Datasets
 
 LeRobot **v3.0** format is required. Hub datasets download once into the `lerobot-hf-cache`
-volume. Set `HF_TOKEN` in `docker/.env` for private repos or higher rate limits. The
-project's own recordings are not LeRobot-valid yet (#34), so the measurements below use the
-public `lerobot/svla_so101_pickplace`: SO-101, 50 episodes, 11,939 frames at 30 fps, 2 cameras
-(`up`, `side`) at 640x480 AV1, 6-D state and action, 1 task.
+volume. Set `HF_TOKEN` in `docker/.env` for private repos or higher rate limits.
+
+The project's own demos are converted with `training/scripts/hdf5_to_lerobot.py` and checked
+with `validate_lerobot_dataset.py` ([DATA_PIPELINE.md](DATA_PIPELINE.md)). The M6 fastener set,
+`data/lerobot/fastener_m6`, has 51 episodes (50 scripted + 1 teleop), 11,801 frames at 30 fps,
+2 cameras (`observation.images.wrist`, `observation.images.overhead`) at 224x224 AV1, 6-D state
+and action in radians, 1 task. A 200-step ACT smoke run on it (batch 8, fp32) went from loss
+23.7 at step 25 to 3.5 at step 200 at 10.7 steps/s, with 1.2 GB peak alloc (1.8 GB nvidia-smi):
+the 224x224 images make ACT much cheaper than on the 640x480 set below. For SmolVLA, map the
+cameras with `--rename-map '{"observation.images.overhead":"observation.images.camera1","observation.images.wrist":"observation.images.camera2"}'`:
+the top-down view goes to `camera1`, as `up` does in LeRobot's SO-101 example below. The
+10k-step runs and their held-out results are in
+[F6: Fine-tune ACT and SmolVLA](tutorials/fasteners/F6_finetune.md).
+
+The measurements below use the public `lerobot/svla_so101_pickplace`: SO-101, 50 episodes,
+11,939 frames at 30 fps, 2 cameras (`up`, `side`) at 640x480 AV1, 6-D state and action, 1 task.
 
 ---
 

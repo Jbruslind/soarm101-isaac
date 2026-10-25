@@ -38,6 +38,13 @@ RUN TORCH_VER="$(python -c 'import torch; print(torch.__version__.split("+")[0])
         "tensorboard>=2.18,<3" \
     && python -c "import lerobot, torch, torchcodec, transformers; print('lerobot', lerobot.__version__, 'torch', torch.__version__, 'torchcodec', torchcodec.__version__, 'transformers', transformers.__version__)"
 
+# h5py: training/scripts/hdf5_to_lerobot.py reads the Isaac Lab demo HDF5 files (#34).
+# matplotlib: the tutorial checkpoint scripts draw their pictures (tutorials/fasteners/part1/06_*).
+# Their own layer so the lerobot install above stays cached.
+ARG H5PY_VERSION=3.14.0
+ARG MATPLOTLIB_VERSION=3.10.8
+RUN pip install "h5py==${H5PY_VERSION}" "matplotlib==${MATPLOTLIB_VERSION}"
+
 # Writable homes for a non-root runtime UID. The HF cache lives in a named volume
 # mounted at /hf-cache; creating it world-writable here makes a fresh volume inherit that.
 ENV HF_HOME=/hf-cache \

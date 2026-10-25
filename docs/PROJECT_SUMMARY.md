@@ -94,7 +94,7 @@ Data is stored in **LeRobot v3.0** format so it is compatible with HuggingFace a
 - **After:**
   - Cameras are **on by default**; `--no-camera` disables them.
   - Both wrist and third-person cameras are used when cameras are enabled.
-  - `LeRobotWriter.save()` adds **video features** to `info.json` for `observation.images.wrist` and `observation.images.third_person` (dtype, shape, video_info with fps/codec/pix_fmt), so the training loader knows about the videos.
+  - (Superseded in #34: `LeRobotWriter` was replaced by `DemoHDF5Writer` + `training/scripts/hdf5_to_lerobot.py`, see DATA_PIPELINE.md.) `LeRobotWriter.save()` added **video features** to `info.json` for `observation.images.wrist` and `observation.images.third_person` (dtype, shape, video_info with fps/codec/pix_fmt), so the training loader knows about the videos.
 
 #### 2.2.4 Language Instruction per Frame
 
@@ -228,7 +228,7 @@ Pass these into `subtract_frame_transforms` and into the IK controller. Use `bod
 ### 4.1 Data Collection
 
 - **Entrypoint:** `./scripts/collect_sim_data.sh [--env reach|pick] [--episodes N] [--no-camera] [--watch] [--public-ip IP]`
-- **Python:** `isaac_envs/sim_data_collector.py` — IK-based policy, LeRobotWriter with video + language_instruction, absolute actions, body_state_w/root_state_w for IK.
+- **Python:** `isaac_envs/sim_data_collector.py` — IK-based policy, DemoHDF5Writer (demo HDF5 with images + prompt; LeRobot conversion via `training/scripts/hdf5_to_lerobot.py`), absolute actions, body_state_w/root_state_w for IK.
 - **Env:** `isaac_envs/soarm_reach_env.py` (robot/target_pos exposed, actuator params updated), `isaac_envs/soarm_pick_env.py` (unchanged, inherits reach).
 
 ### 4.2 Training
