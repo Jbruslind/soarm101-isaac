@@ -133,6 +133,8 @@ compatible containers run simultaneously.
 | **[Interactive Inference](docs/INTERACTIVE_INFERENCE.md)** | Interactive VLA testing with WebRTC streaming |
 | **[Sunshine Streaming](docs/SUNSHINE_STREAMING.md)** | Headless vs GUI Isaac Sim, streamed to Moonlight clients |
 | **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common errors and solutions |
+| **[Real-to-Sim Plan](docs/REAL2SIM.md)** | Planned scanned scenes, simulated D455, Isaac Sim 6.1 migration |
+| **[Cameras](docs/CAMERAS.md)** | Overhead D455 + wrist USB webcam: real setup, Isaac Lab 3.0 camera config, calibration, sim-to-real best practices |
 
 ## Workflow Scripts
 
