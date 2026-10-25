@@ -45,6 +45,12 @@ ARG H5PY_VERSION=3.14.0
 ARG MATPLOTLIB_VERSION=3.10.8
 RUN pip install "h5py==${H5PY_VERSION}" "matplotlib==${MATPLOTLIB_VERSION}"
 
+# websockets + msgpack: training/scripts/lerobot_policy_server.py speaks the OpenPi websocket
+# protocol (isaac_envs/soarm_common/wire.py) to the ros2-bridge and the Isaac Sim client (#36).
+ARG WEBSOCKETS_VERSION=16.1.1
+ARG MSGPACK_VERSION=1.2.3
+RUN pip install "websockets==${WEBSOCKETS_VERSION}" "msgpack==${MSGPACK_VERSION}"
+
 # Writable homes for a non-root runtime UID. The HF cache lives in a named volume
 # mounted at /hf-cache; creating it world-writable here makes a fresh volume inherit that.
 ENV HF_HOME=/hf-cache \
