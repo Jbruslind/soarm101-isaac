@@ -72,7 +72,11 @@ def x_yaw(pos: torch.Tensor, dyaw: torch.Tensor) -> torch.Tensor:
 
 def top_down_quat(pos: torch.Tensor, dyaw: torch.Tensor) -> torch.Tensor:
     """(x, y, z, w) with gripper z down and x at :func:`x_yaw`."""
-    yaw = x_yaw(pos, dyaw)
+    return top_down_quat_from_yaw(x_yaw(pos, dyaw))
+
+
+def top_down_quat_from_yaw(yaw: torch.Tensor) -> torch.Tensor:
+    """(x, y, z, w) with gripper z down and gripper x at angle ``yaw`` from base +x."""
     c, s, zero = torch.cos(yaw), torch.sin(yaw), torch.zeros_like(yaw)
     x_axis = torch.stack([c, s, zero], -1)
     y_axis = torch.stack([s, -c, zero], -1)

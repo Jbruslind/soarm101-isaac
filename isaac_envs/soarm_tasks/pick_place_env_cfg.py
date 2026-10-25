@@ -14,6 +14,8 @@ Soarm-PickPlace-Fastener-JointAbs-v0   absolute joint targets, contract order (6
 Soarm-PickPlace-Fastener-IK-Abs-v0     EE pose in base frame pos+quat xyzw, gripper  yes
                                        joint target (7 + 1)
 Soarm-PickPlace-Fastener-State-v0      absolute joint targets (6)                  no
+Soarm-PickPlace-Fastener-IK-Rel-v0     delta EE pose + gripper +-1 (6 + 1), for    yes
+                                       keyboard / SpaceMouse teleop
 =====================================  ==========================================  ========
 
 The whole module is pure configuration: it builds without launching Kit (see the tests).
@@ -48,7 +50,9 @@ from soarm_common.robot import make_physx_cfg, make_robot_cfg
 from . import mdp
 from . import randomization as R
 from .language import instruction_for
+from .mdp.actions_cfg import IntegratedPoseIKActionCfg
 from .spawners import BinCfg, XformCfg
+from .teleop import make_teleop_devices
 from .work_cell import (
     BIN,
     DEFAULT_FASTENER,
@@ -65,6 +69,7 @@ from .work_cell import (
 ROBOT = SceneEntityCfg("robot", body_names=[C.EE_BODY_NAME], joint_names=[C.GRIPPER_JOINT_NAME])
 FASTENER = SceneEntityCfg("fastener")
 GRIPPER_OPEN = 1.0  # rad; the scripted expert's open angle (the joint opens to 1.745)
+GRIPPER_CLOSED = -0.15  # rad; the expert's closed goal (below contact, so the jaws squeeze)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -158,6 +163,23 @@ class JointAbsActionsCfg:
     gripper_action = gripper_joint_action()
 
 
+def pose_ik_controller() -> SO101PoseIKControllerCfg:
+    """Absolute-pose IK of the IK-Abs and IK-Rel variants."""
+    return SO101PoseIKControllerCfg(
+        command_type="pose",
+        use_relative_mode=False,
+        ik_method="adaptive_dls",
+        ik_params={"lambda_min": 0.05, "lambda_max": 0.2, "sigma_thresh": 0.02},
+        # Isaac Lab's SO-101 task uses 0.5. The fastener grasp needs the jaws square to the
+        # bolt axis, so orientation is tracked at full weight; it is still served by the
+        # wrist only, and position by all five joints.
+        orientation_weight=1.0,
+        orientation_joint_names=("wrist_flex", "wrist_roll"),
+        joint_limit_avoidance_gain=0.5,
+        joint_limit_avoidance_margin=0.3,
+    )
+
+
 # [start:ik_action]
 @configclass
 class IKAbsActionsCfg:
@@ -169,22 +191,33 @@ class IKAbsActionsCfg:
         joint_names=list(C.ARM_JOINT_NAMES),
         body_name=C.EE_BODY_NAME,
         scale=1.0,
-        controller=SO101PoseIKControllerCfg(
-            command_type="pose",
-            use_relative_mode=False,
-            ik_method="adaptive_dls",
-            ik_params={"lambda_min": 0.05, "lambda_max": 0.2, "sigma_thresh": 0.02},
-            # Isaac Lab's SO-101 task uses 0.5. The fastener grasp needs the jaws square to the
-            # bolt axis, so orientation is tracked at full weight; it is still served by the
-            # wrist only, and position by all five joints.
-            orientation_weight=1.0,
-            orientation_joint_names=("wrist_flex", "wrist_roll"),
-            joint_limit_avoidance_gain=0.5,
-            joint_limit_avoidance_margin=0.3,
-        ),
+        controller=pose_ik_controller(),
     )
     gripper_action = gripper_joint_action()
 # [end:ik_action]
+
+
+# [start:ik_rel_action]
+@configclass
+class IKRelActionsCfg:
+    """What Isaac Lab's Se3Keyboard / Se3SpaceMouse send: a delta EE pose [dpos(3), rotvec(3)]
+    (m, rad per step, robot base frame), then the gripper command (+1 open, -1 close): 7 dims.
+    The arm term integrates the delta into an absolute target for the same IK as IK-Abs."""
+
+    arm_action = IntegratedPoseIKActionCfg(
+        asset_name="robot",
+        joint_names=list(C.ARM_JOINT_NAMES),
+        body_name=C.EE_BODY_NAME,
+        scale=1.0,
+        controller=pose_ik_controller(),
+    )
+    gripper_action = base_mdp.BinaryJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[C.GRIPPER_JOINT_NAME],
+        open_command_expr={C.GRIPPER_JOINT_NAME: GRIPPER_OPEN},
+        close_command_expr={C.GRIPPER_JOINT_NAME: GRIPPER_CLOSED},
+    )
+# [end:ik_rel_action]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -366,6 +399,19 @@ class FastenerPickPlaceJointAbsEnvCfg(FastenerPickPlaceEnvCfg):
 @configclass
 class FastenerPickPlaceIKAbsEnvCfg(FastenerPickPlaceEnvCfg):
     actions: IKAbsActionsCfg = IKAbsActionsCfg()
+
+
+# [start:ik_rel_env]
+@configclass
+class FastenerPickPlaceIKRelEnvCfg(FastenerPickPlaceEnvCfg):
+    """Teleop variant: delta-pose actions from a keyboard or SpaceMouse (``record_demos.py``)."""
+
+    actions: IKRelActionsCfg = IKRelActionsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.teleop_devices = make_teleop_devices(self.sim.device)
+# [end:ik_rel_env]
 
 
 @configclass
