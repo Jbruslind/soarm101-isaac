@@ -86,3 +86,39 @@ def check_joint_limits(robot, tol: float = 1e-3) -> list[str]:
     for p in problems:
         print(f"[WARN] soarm_common contract: {p}", flush=True)
     return problems
+
+
+JAW_LINK_NAMES = ("gripper_link", "moving_jaw_so101_v1_link")
+
+
+def use_convex_decomposition_for_jaws(robot_prim_path: str, stage=None) -> int:
+    """Collide the gripper jaws of the robot at ``robot_prim_path`` as convex decompositions
+    instead of convex hulls. Call it after spawning and before the simulation starts.
+
+    The URDF import gives every mesh a single convex hull; the hulls of the curved jaws fill the
+    space between them, so a closing gripper squeezes the object out or traps it in the hull
+    instead of holding it. The collision meshes are instanced, so their instanceable ancestors
+    are de-instanced (on this stage only) first. Links are found by name, so this doesn't depend
+    on the USD layout. Returns the number of collision meshes changed.
+    """
+    import omni.usd
+    from pxr import Usd, UsdPhysics
+
+    stage = stage or omni.usd.get_context().get_stage()
+    meshes, instances = [], set()
+    for prim in Usd.PrimRange(stage.GetPrimAtPath(robot_prim_path), Usd.TraverseInstanceProxies()):
+        if prim.GetName() not in JAW_LINK_NAMES:
+            continue
+        for mesh in Usd.PrimRange(prim, Usd.TraverseInstanceProxies()):
+            if mesh.HasAPI(UsdPhysics.MeshCollisionAPI):
+                meshes.append(mesh.GetPath())
+                parent = mesh
+                while parent.IsInstanceProxy() or parent.IsInstance():
+                    if parent.IsInstance():
+                        instances.add(parent.GetPath())
+                    parent = parent.GetParent()
+    for path in instances:
+        stage.GetPrimAtPath(path).SetInstanceable(False)
+    for path in meshes:
+        UsdPhysics.MeshCollisionAPI(stage.GetPrimAtPath(path)).GetApproximationAttr().Set("convexDecomposition")
+    return len(meshes)
