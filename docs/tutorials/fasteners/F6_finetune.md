@@ -93,13 +93,15 @@ HDF5_TO_LEROBOT = {
 }
 ```
 
-The frame loop is just as short. Each step becomes one `add_frame`, and each demo becomes one
-`save_episode`:
+The frame loop is just as short. Each kept step becomes one `add_frame`, and each demo becomes one
+`save_episode` (`keep_frames` only matters with `--max-idle-frames`, see
+[F7](F7_run_policy.md#the-idle-frame-trap)):
 
 <!-- snippet: training/scripts/hdf5_to_lerobot.py#frames -->
 ```python
-        num_frames = arrays[S.JOINT_POS_TARGETS].shape[0]
-        for t in range(num_frames):
+        keep = keep_frames(arrays[S.JOINT_POS_TARGETS], arrays[S.JOINT_POS], max_idle)
+        num_frames = int(keep.sum())
+        for t in np.flatnonzero(keep):
             frame = {feature: arrays[key][t] for key, feature in HDF5_TO_LEROBOT.items()}
             frame[C.DATASET_STATE_KEY] = frame[C.DATASET_STATE_KEY].astype(np.float32)
             frame[C.DATASET_ACTION_KEY] = frame[C.DATASET_ACTION_KEY].astype(np.float32)
@@ -455,4 +457,4 @@ General problems are in [F0's troubleshooting](F0_setup.md#troubleshooting),
 You have two trained policies, and you know which tracks the expert better on new bolt poses.
 Next, run them live, closed-loop in Isaac Sim, where the policy has to cope with its own
 mistakes.
-Next: F7: Run your policy in Isaac Sim (coming with #36). Back to the [tutorial index](../README.md).
+Next: [F7: Run your policy in Isaac Sim](F7_run_policy.md). Back to the [tutorial index](../README.md).

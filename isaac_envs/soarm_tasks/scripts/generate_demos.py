@@ -40,6 +40,12 @@ parser.add_argument("--keep_failures", action="store_true", help="also write fai
 parser.add_argument("--no-cameras", action="store_true", help="drop both cameras (no images in the file)")
 parser.add_argument("--max_episodes", type=int, default=0, help="stop after this many finished episodes (0: 4x num_demos)")
 parser.add_argument("--json", default=None, help="write a run summary here")
+# corrective demonstrations (F7): see ExpertParams.retry / miss_prob / perturb_prob
+parser.add_argument("--retry", action="store_true", help="expert retries after a missed grasp")
+parser.add_argument("--miss_prob", type=float, default=0.0, help="chance per episode of a deliberate first miss (needs --retry)")
+parser.add_argument("--perturb_prob", type=float, default=0.0, help="chance per episode of a goal displacement while approaching")
+parser.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE",
+                    help="override other ExpertParams fields, e.g. hover_tol=0.015")
 add_launcher_args(parser)
 args = parser.parse_args()
 args.enable_cameras = not args.no_cameras
@@ -55,7 +61,7 @@ def main():
         from isaaclab_tasks.utils import parse_env_cfg
 
         import soarm_tasks  # noqa: F401
-        from soarm_tasks.expert import FastenerPickExpert
+        from soarm_tasks.expert import ExpertParams, FastenerPickExpert
         from soarm_tasks.recorders import DemoRecorderManagerCfg
         from soarm_tasks.work_cell import BIN
 
@@ -72,22 +78,30 @@ def main():
         success_term = cfg.terminations.success
         cfg.terminations.success = None
         out_dir, out_name = os.path.split(os.path.abspath(args.dataset_file))
+        corrective = args.retry or args.miss_prob > 0 or args.perturb_prob > 0
         cfg.recorders = DemoRecorderManagerCfg(
             dataset_export_dir_path=out_dir,
             dataset_filename=os.path.splitext(out_name)[0],
             dataset_export_mode=(DatasetExportMode.EXPORT_SUCCEEDED_FAILED_IN_SEPARATE_FILES if args.keep_failures
                                  else DatasetExportMode.EXPORT_SUCCEEDED_ONLY),
         )
+        if corrective:  # labelled in the file so the LeRobot conversion can tell them apart
+            cfg.recorders.record_episode_meta.source = "scripted_corrective"
         # [end:cfg]
         os.makedirs(out_dir, exist_ok=True)
         print(f"[demos] task={args.task} num_envs={args.num_envs} seed={args.seed} "
-              f"cameras={not args.no_cameras} -> {args.dataset_file}", flush=True)
+              f"cameras={not args.no_cameras} retry={args.retry} miss_prob={args.miss_prob} "
+              f"perturb_prob={args.perturb_prob} set={args.set} -> {args.dataset_file}", flush=True)
 
         env = gym.make(args.task, cfg=cfg)
         u = env.unwrapped
         rec = u.recorder_manager
         obs, _ = env.reset(seed=args.seed)
-        expert = FastenerPickExpert(u.num_envs, u.device, BIN.center)
+        params = ExpertParams(retry=args.retry, miss_prob=args.miss_prob, perturb_prob=args.perturb_prob)
+        for kv in args.set:
+            k, v = kv.split("=")
+            setattr(params, k, type(getattr(params, k))(float(v)))
+        expert = FastenerPickExpert(u.num_envs, u.device, BIN.center, params)
         held = torch.zeros(u.num_envs, dtype=torch.long, device=u.device)
         max_episodes = args.max_episodes or 4 * args.num_demos
         steps, t0 = 0, time.time()

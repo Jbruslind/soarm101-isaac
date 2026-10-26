@@ -42,6 +42,17 @@ class ExpertParams:
     tol: float = 0.01                # m, EE tolerance in the other phases
     settle_steps: int = 15           # steps the bolt gets to settle before the grasp is planned
     # [end:params]
+    # [start:recovery_params]
+    # Corrective demonstrations (F7): all off by default, so the plain expert is unchanged.
+    retry: bool = False              # after a missed grasp (bolt still down when lifting), go back to hover
+    max_retries: int = 2
+    miss_prob: float = 0.0           # chance per episode that the first grasp aims miss_offset off the bolt
+    miss_offset: float = 0.03        # m, along the bolt axis: the jaws close on nothing, a retry follows
+    perturb_prob: float = 0.0        # chance per episode of one goal displacement during hover/descend
+    perturb_range: tuple[float, float] = (0.01, 0.025)  # m, sideways size of the displacement
+    perturb_steps: int = 6           # control steps the goal stays displaced; the expert then corrects
+    pose_noise: float = 0.0          # m, std of an xy error in the bolt position the grasp is planned from
+    # [end:recovery_params]
 
 
 # (name, gripper ("open"/"closed"), steps to hold once within tol, max steps in phase)
@@ -98,6 +109,14 @@ class FastenerPickExpert:
         self.dyaw = z()
         self.has_cmd = torch.zeros(num_envs, dtype=torch.bool, device=device)
         self.max_phase = torch.zeros_like(self.phase)  # furthest phase reached (diagnostics)
+        # corrective demonstrations (ExpertParams.retry / miss_prob / perturb_prob)
+        self.retries = torch.zeros_like(self.phase)
+        self.miss = torch.zeros(num_envs, dtype=torch.bool, device=device)      # aim off the bolt this try
+        self.perturb_at = torch.full_like(self.phase, -1)                        # step in hover/descend, -1: none
+        self.perturb_left = torch.zeros_like(self.phase)
+        self.perturb_vec = z(3)
+        self.steps_in_approach = torch.zeros_like(self.phase)
+        self._draw_episode(torch.arange(num_envs, device=device))
 
     def reset(self, env_ids: torch.Tensor | None = None):
         ids = slice(None) if env_ids is None else env_ids
@@ -106,6 +125,22 @@ class FastenerPickExpert:
         self.settled[ids] = 0
         self.max_phase[ids] = 0
         self.has_cmd[ids] = False
+        self.retries[ids] = 0
+        self.perturb_left[ids] = 0
+        self.steps_in_approach[ids] = 0
+        self._draw_episode(torch.arange(self.n, device=self.device)[ids])
+
+    def _draw_episode(self, ids: torch.Tensor):
+        """Per-episode random choices for corrective demonstrations."""
+        k = len(ids)
+        if k == 0:
+            return
+        r = lambda: torch.rand(k, device=self.device)  # noqa: E731
+        self.miss[ids] = r() < self.p.miss_prob
+        self.perturb_at[ids] = torch.where(r() < self.p.perturb_prob, (r() * 60).long(), torch.full_like(ids, -1))
+        ang, (lo, hi) = r() * 2 * torch.pi, self.p.perturb_range
+        mag = lo + (hi - lo) * r()
+        self.perturb_vec[ids] = torch.stack([mag * torch.cos(ang), mag * torch.sin(ang), torch.zeros_like(mag)], -1)
 
     # [start:plan]
     def plan(self, fastener_pose_b: torch.Tensor, ids: torch.Tensor):
@@ -123,6 +158,12 @@ class FastenerPickExpert:
             goal = grasp.clone()
             goal[:, :2] += self.p.grasp_offset * torch.stack([torch.cos(yaw), torch.sin(yaw)], -1)
         self.dyaw[ids] = wrap_half_pi(axis_yaw + torch.pi / 2 - x_yaw(goal, torch.zeros_like(axis_yaw)))
+        # a deliberate miss (miss_prob): aim along the bolt axis, past the bolt, so the jaws close on nothing
+        miss = self.miss[ids].unsqueeze(-1)
+        side = torch.where(torch.rand(len(ids), 1, device=self.device) < 0.5, -1.0, 1.0)
+        goal = torch.where(miss, goal + side * self.p.miss_offset * axis * torch.tensor([1.0, 1.0, 0.0], device=self.device), goal)
+        if self.p.pose_noise > 0:  # how precise must a policy be? plan from a noisy bolt position
+            goal[:, :2] += self.p.pose_noise * torch.randn(len(ids), 2, device=self.device)
         self.target[ids] = goal
     # [end:plan]
 
@@ -136,6 +177,8 @@ class FastenerPickExpert:
         holding = (ph == P["close"]) | (ph == P["lift"])
         goal[holding] = self.grasp_pos[holding]
         goal[ph == P["lift"], 2] = p.hover_z
+        # a goal displacement (perturb_prob) while approaching: sideways only
+        goal[self.perturb_left > 0] += self.perturb_vec[self.perturb_left > 0]
         # over the bin: shift by the same grasp offset so the bolt, not the EE, is centred
         placing = (ph >= P["carry"])
         if placing.any():
@@ -157,11 +200,36 @@ class FastenerPickExpert:
         settling = self.phase == P["settle"]
         if settling.any():
             self.plan(fastener_pose_b, settling.nonzero().squeeze(-1))
+        # [start:recovery]
+        # retry: lifting but the bolt is still on the table -> the grasp missed; plan again from hover
+        if p.retry:
+            lifting = self.phase == P["lift"]
+            missed = lifting & (ee_pos_b[:, 2] > self.grasp_pos[:, 2] + 0.02) & (fastener_pose_b[:, 2] < 0.015) \
+                & (self.retries < p.max_retries)
+            if missed.any():
+                ids = missed.nonzero().squeeze(-1)
+                self.retries[ids] += 1
+                self.miss[ids] = False                 # aim at the bolt this time
+                self.plan(fastener_pose_b, ids)
+                self.phase[ids] = P["hover"]
+                self.t[ids] = 0
+                self.settled[ids] = 0
+        # perturb: once per chosen episode, displace the goal for perturb_steps while approaching
+        approaching = (self.phase == P["hover"]) | (self.phase == P["descend"])
+        self.steps_in_approach += approaching.long()
+        start = approaching & (self.perturb_at >= 0) & (self.steps_in_approach == self.perturb_at + 1)
+        self.perturb_left[start] = p.perturb_steps
+        self.perturb_at[start] = -1
+        perturbed = self.perturb_left > 0
+        # [end:recovery]
         # remember where the descent ended when the close phase starts
         goal = self._goals(ee_pos_b)
         dist = torch.linalg.vector_norm(ee_pos_b - goal, dim=-1)
         tol = torch.where(self.phase == P["hover"], p.hover_tol, p.tol)
         self.settled += (dist < tol).long()
+        self.settled[perturbed] = 0                    # no progress while displaced
+        self.t[perturbed] = 0
+        self.perturb_left = (self.perturb_left - 1).clamp_min(0)
         self.t += 1
         hold = torch.tensor([ph[2] for ph in PHASES], device=self.device)[self.phase]
         max_steps = torch.tensor([p.settle_steps] + [ph[3] for ph in PHASES[1:]], device=self.device)[self.phase]
