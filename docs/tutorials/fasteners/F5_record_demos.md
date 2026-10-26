@@ -124,11 +124,12 @@ def key_moments(g: h5py.Group) -> dict[str, int]:
     grip_target = g["ee_pose_actions"][:, 7]          # rad: > 0.5 open, < 0 close
     bolt = g["obs/fastener_pose"][:, :3]              # bolt position in the robot base frame (m)
     closed = grip_target < 0.5
-    t_close = int(np.argmax(closed))                  # first step with the "close" command
     t_lift = int(np.argmax(bolt[:, 2] > 0.03))        # bolt 3 cm above the table
+    starts = np.flatnonzero(closed[1:t_lift + 1] & ~closed[:t_lift]) + 1
+    t_close = int(starts[-1]) if len(starts) else int(np.argmax(closed))  # the close that lifted it
     near_bin = np.all(np.abs(bolt[:, :2] - np.array(BIN.center)) < np.array(BIN.inner_size) / 2, axis=1)
     t_over = int(np.argmax(near_bin & (bolt[:, 2] > 0.03)))
-    t_release = t_close + int(np.argmax(~closed[t_close:]))  # first "open" command after the grasp
+    t_release = t_lift + int(np.argmax(~closed[t_lift:]))  # first "open" command after the lift
     return {"start": 0, "jaws close": t_close, "lifted": t_lift, "over the bin": t_over,
             "release": t_release, "end": len(grip_target) - 1}
 ```

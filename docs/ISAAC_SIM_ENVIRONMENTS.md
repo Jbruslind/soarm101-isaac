@@ -297,6 +297,20 @@ What we tried (16 envs × 64 episodes, seed 2, no cameras, unless noted):
 | 0.6 cm/step only while holding | 123/128 (96 %, seed 3) | |
 | **0.6 cm/step throughout** (default) | 62/64; 127/128 (seed 3) | adopted; successful episodes take 210-226 steps (~7.3 s) |
 
+**Corrective demonstrations** (F7). `ExpertParams` has options, all off by default, that put
+mistakes and recoveries into demos, so a policy learns what to do after one:
+- `retry`: after a missed grasp (the bolt still on the table while lifting), plan again from the
+  hover.
+- `miss_prob`: a deliberate first miss, 3 cm along the bolt axis.
+- `perturb_prob`: one 1–2.5 cm sideways goal displacement while approaching.
+- `pose_noise`: plan from a noisy bolt position, for measuring how precise the grasp must be.
+
+`generate_demos.py` exposes them as `--retry --miss_prob P --perturb_prob P`; any other field is
+set with `--set KEY=VALUE`. These demos are labelled `source=scripted_corrective`.
+`--set hover_tol=0.015` starts the descent within 1.5 cm instead of waiting for 4 mm, which
+removes the idle hover that makes policies stall. The expert still places 64/64 that way.
+Expert success with `pose_noise` 0 / 2 / 4 / 6 mm is 64/64, 57/64, 51/64 and 38/64.
+
 ### Throughput and VRAM (12 GB reference GPU, `soarm_tasks/scripts/smoke.py`, 300 steps holding the reset pose)
 
 | Task | Envs | Cameras | Steps/s | Env-steps/s | GPU memory used (peak) |

@@ -113,16 +113,20 @@ def validate(root: str, repo_id: str, hdf5_dir: str | None, expect_episodes: int
     sources = json.loads(sources_path.read_text())
     r.check(len(sources) == meta.total_episodes, f"{SOURCES_FILE} episodes", str(len(sources)))
 
-    # Per-episode length and task string.
+    # Per-episode length and task string. With --max-idle-frames the converter kept only some HDF5
+    # frames and listed them as "kept_frames"; dataset frame t is HDF5 frame kept_frames[t].
+    kept = {src["episode_index"]: np.asarray(src.get("kept_frames", range(src["num_samples"]))) for src in sources}
     bad_len, bad_task = [], []
     for src in sources:
         ep = meta.episodes[src["episode_index"]]
-        if int(ep["length"]) != src["num_samples"]:
+        if int(ep["length"]) != len(kept[src["episode_index"]]):
             bad_len.append(src["episode_index"])
         if list(ep["tasks"]) != [src["prompt"]]:
             bad_task.append(src["episode_index"])
-    r.check(not bad_len, "episode lengths = HDF5 num_samples", f"mismatch in {bad_len}" if bad_len else
-            f"{min(s['num_samples'] for s in sources)}-{max(s['num_samples'] for s in sources)} frames")
+    lengths = [len(k) for k in kept.values()]
+    trimmed = sum(s["num_samples"] for s in sources) - sum(lengths)
+    r.check(not bad_len, "episode lengths = HDF5 frames kept", f"mismatch in {bad_len}" if bad_len else
+            f"{min(lengths)}-{max(lengths)} frames" + (f" ({trimmed} idle frames trimmed)" if trimmed else ""))
     r.check(not bad_task, "one task per episode = HDF5 prompt", f"mismatch in {bad_task}" if bad_task else
             f"{len(meta.tasks)} distinct task(s)")
 
@@ -139,15 +143,15 @@ def validate(root: str, repo_id: str, hdf5_dir: str | None, expect_episodes: int
     for src in sources:
         h5 = str(Path(hdf5_dir) / src["file"])
         arrays, _ = S.load_episode(h5, src["demo"], keys=(S.JOINT_POS, S.JOINT_POS_TARGETS))
-        rows = ep_col == src["episode_index"]
-        worst = max(worst, float(np.abs(state_col[rows] - arrays[S.JOINT_POS].astype(np.float32)).max()),
-                    float(np.abs(action_col[rows] - arrays[S.JOINT_POS_TARGETS].astype(np.float32)).max()))
+        rows, idx = ep_col == src["episode_index"], kept[src["episode_index"]]
+        worst = max(worst, float(np.abs(state_col[rows] - arrays[S.JOINT_POS][idx].astype(np.float32)).max()),
+                    float(np.abs(action_col[rows] - arrays[S.JOINT_POS_TARGETS][idx].astype(np.float32)).max()))
     r.check(worst == 0.0, "state/action = HDF5 joint_pos / joint_pos_targets", f"max abs diff {worst:g} rad")
 
     # [start:frames]
     # Video frames: decode N random (episode, t) samples through the dataset and compare.
     rng = np.random.default_rng(seed)
-    picks = [(src, int(rng.integers(src["num_samples"])))
+    picks = [(src, int(rng.integers(len(kept[src["episode_index"]]))))
              for src in (sources[i] for i in rng.integers(len(sources), size=num_samples))]
     errors = {cam.dataset_key: [] for cam in C.CAMERAS}
     misaligned, judged = [], 0
@@ -156,15 +160,16 @@ def validate(root: str, repo_id: str, hdf5_dir: str | None, expect_episodes: int
         arrays, _ = S.load_episode(h5, src["demo"], keys=tuple(f"obs/{c.obs_key}" for c in C.CAMERAS))
         item = ds[int(meta.episodes[src["episode_index"]]["dataset_from_index"]) + t]
         assert int(item["frame_index"]) == t and int(item["episode_index"]) == src["episode_index"]
+        h = int(kept[src["episode_index"]][t])                # the HDF5 frame behind dataset frame t
         for cam in C.CAMERAS:
             ref = arrays[f"obs/{cam.obs_key}"]
             frame = to_uint8_hwc(item[cam.dataset_key])
-            err = mae(frame, ref[t])
+            err = mae(frame, ref[h])
             errors[cam.dataset_key].append(err)
             # Time alignment, judged only where the scene moved between steps by clearly more than
             # the codec error (in still phases neighbouring frames are equally close).
-            for u in (t - 1, t + 1):
-                if 0 <= u < len(ref) and mae(ref[u], ref[t]) > 2 * err + 1:
+            for u in (h - 1, h + 1):
+                if 0 <= u < len(ref) and mae(ref[u], ref[h]) > 2 * err + 1:
                     judged += 1
                     if mae(frame, ref[u]) <= err:
                         misaligned.append((src["episode_index"], t, u, cam.name))

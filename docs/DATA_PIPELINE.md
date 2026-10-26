@@ -74,6 +74,12 @@ docker compose --profile train-lerobot run --rm -e NVIDIA_VISIBLE_DEVICES=void l
 Options: `--source scripted` (repeatable) keeps only demos with that `source` attribute,
 `--include-failed` also converts demos with `success=False` (skipped by default), `--vcodec h264`
 picks another codec (default: LeRobot's AV1), `--overwrite` replaces an existing dataset.
+`--max-idle-frames 2` keeps only the first 2 frames of every *idle* stretch (joint targets and
+angles both moving less than 0.005 rad per frame); about 28 % of the scripted frames are idle.
+Use it for policies that will run closed-loop: a stretch of nearly identical frames whose label
+flips at the end ("hover" → "go down") teaches a policy to hover for ever
+([F7](tutorials/fasteners/F7_run_policy.md#the-idle-frame-trap)). The kept frame indices go to
+`meta/soarm_sources.json`, and the validator compares against those.
 Each demo becomes one episode with one task string, at `fps` = the contract's 30 Hz control rate.
 The 50 scripted + 1 teleop M6 demos (11,801 frames, 817 MB of HDF5) convert in about 4 minutes
 to a 30 MB dataset.

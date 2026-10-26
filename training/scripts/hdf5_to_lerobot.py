@@ -146,7 +146,8 @@ def select_demos(paths: list[str], sources: set[str] | None, include_failed: boo
 
 
 def convert(paths: list[str], output_root: str, repo_id: str, sources: set[str] | None = None,
-            include_failed: bool = False, vcodec: str | None = None, overwrite: bool = False) -> dict:
+            include_failed: bool = False, vcodec: str | None = None, overwrite: bool = False,
+            max_idle: int = -1) -> dict:
     """Write the selected demos of ``paths`` as a LeRobot v3.0 dataset at ``output_root``."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -181,8 +182,9 @@ def convert(paths: list[str], output_root: str, repo_id: str, sources: set[str] 
     for ep_index, demo in enumerate(demos):
         arrays, _ = S.load_episode(demo["file"], demo["demo"], keys=tuple(HDF5_TO_LEROBOT))
         # [start:frames]
-        num_frames = arrays[S.JOINT_POS_TARGETS].shape[0]
-        for t in range(num_frames):
+        keep = keep_frames(arrays[S.JOINT_POS_TARGETS], arrays[S.JOINT_POS], max_idle)
+        num_frames = int(keep.sum())
+        for t in np.flatnonzero(keep):
             frame = {feature: arrays[key][t] for key, feature in HDF5_TO_LEROBOT.items()}
             frame[C.DATASET_STATE_KEY] = frame[C.DATASET_STATE_KEY].astype(np.float32)
             frame[C.DATASET_ACTION_KEY] = frame[C.DATASET_ACTION_KEY].astype(np.float32)
@@ -191,6 +193,8 @@ def convert(paths: list[str], output_root: str, repo_id: str, sources: set[str] 
         dataset.save_episode()  # encodes the videos, writes parquet + episode metadata
         # [end:frames]
         demo["episode_index"] = ep_index
+        if max_idle >= 0:
+            demo["kept_frames"] = np.flatnonzero(keep).tolist()  # for the validator
         print(f"episode {ep_index:3d}  {Path(demo['file']).name}:{demo['demo']:<8s} {demo['source']:<9s} "
               f"{num_frames:4d} frames  ({time.time() - t0:6.1f} s)", flush=True)
     dataset.finalize()  # flushes parquet footers; the dataset is invalid without it
@@ -203,9 +207,32 @@ def convert(paths: list[str], output_root: str, repo_id: str, sources: set[str] 
         "frames": dataset.meta.total_frames, "fps": dataset.meta.fps,
         "tasks": sorted({d["prompt"] for d in demos}),
         "sources": {s: sum(d["source"] == s for d in demos) for s in sorted({d["source"] for d in demos})},
+        "max_idle_frames": max_idle,
         "seconds": round(time.time() - t0, 1),
     }
     return summary
+
+
+# [start:idle]
+def keep_frames(actions: np.ndarray, states: np.ndarray, max_idle: int, eps: float = 0.005) -> np.ndarray:
+    """Which frames to keep when idle stretches are trimmed (``--max-idle-frames``).
+
+    A frame is idle when neither the joint targets nor the joint angles moved more than ``eps``
+    rad since the previous frame, e.g. while the expert hovers and waits to line up. In such a
+    stretch the camera images hardly change, yet the label switches from "stay" to "go down" at
+    its end, so a policy cannot tell when to go and, closed-loop, hovers for ever. Keep only the
+    first ``max_idle`` frames of every idle stretch (all frames when ``max_idle`` < 0).
+    """
+    keep = np.ones(len(actions), dtype=bool)
+    if max_idle < 0:
+        return keep
+    run = 0
+    for t in range(1, len(actions)):
+        idle = np.abs(actions[t] - actions[t - 1]).max() < eps and np.abs(states[t] - states[t - 1]).max() < eps
+        run = run + 1 if idle else 0
+        keep[t] = run <= max_idle
+    return keep
+# [end:idle]
 
 
 def main():
@@ -219,6 +246,9 @@ def main():
     parser.add_argument("--vcodec", default=None,
                         help="video codec (default: lerobot's, libsvtav1); e.g. h264 for faster decoding elsewhere")
     parser.add_argument("--overwrite", action="store_true", help="replace an existing output directory")
+    parser.add_argument("--max-idle-frames", type=int, default=-1,
+                        help="keep only the first N frames of every idle stretch (arm and targets still); "
+                             "-1 keeps all. 2 is a good choice for closed-loop policies (see F7)")
     args = parser.parse_args()
 
     for path in args.inputs:
@@ -227,7 +257,7 @@ def main():
             raise SystemExit(f"{path} cannot be converted:\n  " + "\n  ".join(problems[:10]))
     repo_id = args.repo_id or f"local/{Path(args.output_root).name}"
     summary = convert(args.inputs, args.output_root, repo_id, set(args.source) if args.source else None,
-                      args.include_failed, args.vcodec, args.overwrite)
+                      args.include_failed, args.vcodec, args.overwrite, args.max_idle_frames)
     print(json.dumps(summary, indent=2))
 
 

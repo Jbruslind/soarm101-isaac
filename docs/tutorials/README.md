@@ -41,7 +41,7 @@ GUI over Moonlight. Part 2 scales up with headless Isaac Lab.
 | F4 | Scripted pick-and-place | ≥ 16/20 successes | planned, needs #32 |
 | [F5](fasteners/F5_record_demos.md) | Record demonstrations: 50 scripted + 5 keyboard teleop, check and replay them | `[F5] PASS`, replay 50/50 | **available** (LeRobot conversion: #34) |
 | [F6](fasteners/F6_finetune.md) | Convert to LeRobot, fine-tune ACT and SmolVLA, test on held-out demos | `[F6] PASS` (≤ 0.1 rad held-out error) | **available** |
-| F7 | Run your policy in Isaac Sim. **Part 1 milestone** | ≥ 6/10 on M6 | planned, needs #36 |
+| [F7](fasteners/F7_run_policy.md) | Run your policy in Isaac Sim closed-loop; diagnose failures (traces, same-state comparison, idle frames, precision). **Part 1 milestone** | ≥ 60 % placed on M6 | **available**; milestone met: 72 % (43/60) |
 
 **Part 2: headless scale-up in Isaac Lab** (scripts in `tutorials/fasteners/part2/`)
 
