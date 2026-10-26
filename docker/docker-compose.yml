@@ -102,6 +102,8 @@ services:
       - OPENPI_HOST=${OPENPI_HOST:-localhost}
       - OPENPI_PORT=${OPENPI_PORT:-8000}
       - OPENPI_POLICY_MODE=${OPENPI_POLICY_MODE:-soarm}
+      # LeRobot policies (#36) need both cameras: set to 1 so the bridge waits for the overhead image.
+      - OPENPI_REQUIRE_OVERHEAD_IMAGE=${OPENPI_REQUIRE_OVERHEAD_IMAGE:-0}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
       # Isaac Sim runs Fast DDS UDP-only (FASTDDS_BUILTIN_TRANSPORTS above). The default Fast DDS
@@ -264,6 +266,40 @@ services:
     # DataLoader workers pass decoded frames through shared memory.
     shm_size: "16g"
     working_dir: /workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
+    restart: "no"
+
+  # LeRobot policy server (#36): serves an ACT / SmolVLA checkpoint on the OpenPi websocket
+  # protocol (port 8000) to the ros2-bridge, interactive_inference.py and the Isaac Sim client.
+  # Start it with scripts/serve_lerobot.sh. It uses the GPU when it has room, else the CPU.
+  lerobot-server:
+    profiles: ["serve-lerobot"]
+    image: soarm-lerobot:${LEROBOT_VERSION:-0.6.1}
+    container_name: soarm-lerobot-server
+    runtime: nvidia
+    network_mode: host
+    user: "${SOARM_UID:-1000}:${SOARM_GID:-1000}"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ../data:/workspace/data:ro
+      - lerobot-hf-cache:/hf-cache
+      - ../isaac_envs:/isaac_envs:ro
+      - ../training:/training:ro
+    working_dir: /workspace
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('SOARM_POLICY_PORT', '8000') + '/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
     deploy:
       resources:
         reservations:

@@ -82,6 +82,10 @@ RUN /isaac-sim/python.sh -m pip install --no-cache-dir \
     av \
     pandas
 
+# msgpack: the policy-server wire protocol (isaac_envs/soarm_common/wire.py) for the closed-loop
+# policy client (tutorials/fasteners/part1/07_run_policy.py, #36). websockets ships with Isaac Sim.
+RUN /isaac-sim/python.sh -m pip install --no-cache-dir "msgpack==1.2.3"
+
 # Copy helper script for URDF -> USD conversion
 COPY convert_urdf.py /usr/local/bin/convert_urdf.py
 
