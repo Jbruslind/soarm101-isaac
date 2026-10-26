@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch LoRA fine-tuning of a VLA model on collected episodes.
 #
-# Mode A (local 3080 Ti): runs with QLoRA + CPU offloading
+# Mode A (local GPU): runs with QLoRA + CPU offloading
 # Mode B (remote cloud):  runs with full precision
 #
 # Usage:
@@ -34,8 +34,8 @@ if [ -n "$REMOTE_HOST" ]; then
     # Pull checkpoints back
     "$SCRIPT_DIR/sync_data.sh" pull "$REMOTE_HOST"
 else
-    echo "=== Local training (3080 Ti mode) ==="
-    echo "Using QLoRA with CPU offloading for 12GB VRAM"
+    echo "=== Local training (QLoRA mode) ==="
+    echo "Using QLoRA with CPU offloading (small-VRAM GPUs)"
 
     cd "$PROJECT_DIR/docker"
     docker compose --profile train run --rm training

@@ -2,7 +2,9 @@
 # Fine-tune a LeRobot policy (SmolVLA or ACT) in the soarm-lerobot container.
 #
 # Wraps `lerobot-train` (lerobot 0.6.1) with TensorBoard logging; checkpoints and
-# logs go to data/checkpoints/<job>/. Needs the whole 12 GB GPU: stop Isaac Sim first.
+# logs go to data/checkpoints/<job>/. Works on any NVIDIA GPU: it reads the free GPU memory,
+# lowers the default batch size until the run fits, and stops if even batch 1 would not fit
+# (e.g. while Isaac Sim holds most of a small card).
 # See docs/LEROBOT_TRAINING.md.
 #
 # Usage:
@@ -10,7 +12,8 @@
 #
 # Options:
 #   --steps N           training steps (default 20000)
-#   --batch B           batch size (default: smolvla 16, act 8)
+#   --batch B           batch size (default: smolvla 16, act 8, halved until it fits in free
+#                       GPU memory; an explicit --batch is checked but never changed)
 #   --workers W         dataloader workers (default 6)
 #   --amp               ACT only: fp16 autocast + grad scaling. SmolVLA already trains
 #                       in bf16 (smolvla_base weights are bf16) and rejects --amp.
@@ -21,7 +24,7 @@
 #   --save-freq N       checkpoint every N steps (default 5000; final step always saved)
 #   --log-freq N        log every N steps (default 100)
 #   --resume            resume data/checkpoints/<job-name> from its last checkpoint
-#   --force             train even if an Isaac Sim container is running
+#   --force             skip the GPU memory check
 #
 # Examples:
 #   ./scripts/train_lerobot.sh --policy act --dataset lerobot/svla_so101_pickplace --steps 1000
@@ -33,6 +36,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# shellcheck source=_gpu.sh
+source "$SCRIPT_DIR/_gpu.sh"
 
 POLICY=""
 DATASET=""
@@ -79,6 +84,8 @@ if [[ "$POLICY" == smolvla && $AMP -eq 1 ]]; then
     exit 1
 fi
 
+BATCH_GIVEN=0
+[[ -n "$BATCH" ]] && BATCH_GIVEN=1
 case "$POLICY" in
     smolvla) POLICY_ARGS=(--policy.path=lerobot/smolvla_base); BATCH="${BATCH:-16}" ;;
     act)     POLICY_ARGS=(--policy.type=act); BATCH="${BATCH:-8}" ;;
@@ -103,10 +110,43 @@ fi
 JOB_NAME="${JOB_NAME:-${POLICY}_${DS_NAME}_$(date +%Y%m%d-%H%M%S)}"
 OUT_DIR="/workspace/data/checkpoints/$JOB_NAME"
 
-if [[ $FORCE -eq 0 ]] && docker ps --format '{{.Names}}' | grep -qx 'soarm-isaac-sim'; then
-    echo "Isaac Sim (soarm-isaac-sim) is running. Training needs the whole 12 GB GPU." >&2
-    echo "Stop it first (docker stop soarm-isaac-sim) or pass --force." >&2
-    exit 1
+# Image size of the dataset's cameras (ACT's memory grows with it). Local datasets say it in
+# meta/info.json; for Hub datasets assume 640x480, the common SO-101 recording size.
+IMG_PIXELS=$((640 * 480))
+if [[ -n "${DS_ABS:-}" && -f "$DS_ABS/meta/info.json" ]]; then
+    IMG_PIXELS="$(python3 -c '
+import json, sys
+f = json.load(open(sys.argv[1]))["features"]
+px = [v["shape"][0] * v["shape"][1] for v in f.values() if v.get("dtype") in ("video", "image")]
+print(max(px) if px else 640 * 480)' "$DS_ABS/meta/info.json" 2>/dev/null || echo $((640 * 480)))"
+fi
+
+# [start:vram_estimate]
+# Peak GPU memory (MiB, as nvidia-smi reports it, CUDA context included) of one training
+# process, fitted to the measurements in docs/LEROBOT_TRAINING.md, plus a 10 % margin:
+#   SmolVLA (bf16, frozen vision encoder): 1.6 GB + 0.21 GB per sample
+#   ACT (fp32):                            1.2 GB + 0.40 GB per sample at 640x480, scaled by image area
+need_mib() {
+    awk -v p="$POLICY" -v b="$1" -v px="$IMG_PIXELS" 'BEGIN {
+        gb = (p == "smolvla") ? 1.6 + 0.21 * b : 1.2 + 0.40 * b * px / (640 * 480)
+        printf "%d", gb * 1024 * 1.1 }'
+}
+# [end:vram_estimate]
+
+if [[ $FORCE -eq 0 ]] && read -r GPU_TOTAL GPU_FREE < <(gpu_mem_mib); then
+    if [[ $BATCH_GIVEN -eq 0 ]]; then
+        while (( BATCH > 1 && $(need_mib "$BATCH") > GPU_FREE )); do BATCH=$((BATCH / 2)); done
+    fi
+    NEED="$(need_mib "$BATCH")"
+    echo "GPU: $(gpu_name) - $(mib_to_gb "$GPU_FREE") GB free of $(mib_to_gb "$GPU_TOTAL") GB;" \
+         "$POLICY at batch $BATCH needs about $(mib_to_gb "$NEED") GB"
+    if (( NEED > GPU_FREE )); then
+        echo "Not enough free GPU memory for batch $BATCH. Free some (nvidia-smi shows what holds it," >&2
+        echo "often an Isaac Sim container), lower --batch, or pass --force to try anyway." >&2
+        exit 1
+    fi
+elif [[ $FORCE -eq 0 ]]; then
+    echo "nvidia-smi not found on the host: skipping the GPU memory check." >&2
 fi
 
 mkdir -p "$PROJECT_DIR/data/checkpoints"

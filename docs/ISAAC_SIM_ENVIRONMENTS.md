@@ -297,7 +297,7 @@ What we tried (16 envs × 64 episodes, seed 2, no cameras, unless noted):
 | 0.6 cm/step only while holding | 123/128 (96 %, seed 3) | |
 | **0.6 cm/step throughout** (default) | 62/64; 127/128 (seed 3) | adopted; successful episodes take 210-226 steps (~7.3 s) |
 
-### Throughput and VRAM (RTX A2000 12 GB, `soarm_tasks/scripts/smoke.py`, 300 steps holding the reset pose)
+### Throughput and VRAM (12 GB reference GPU, `soarm_tasks/scripts/smoke.py`, 300 steps holding the reset pose)
 
 | Task | Envs | Cameras | Steps/s | Env-steps/s | GPU memory used (peak) |
 |---|---|---|---|---|---|
@@ -376,7 +376,7 @@ $P $S/with_soarm_tasks.py /workspace/isaaclab/scripts/tools/replay_demos.py \
     --num_envs 4 --validate_success_rate
 ```
 
-| Run (M6x20, RTX A2000) | Result |
+| Run (M6x20, 12 GB reference GPU) | Result |
 |---|---|
 | `generate_demos.py`, 4 envs, cameras, seed 0 | **50/50** written, 0 failed, 415 s (28.5 env-steps/s), 817 MB, 11 380 steps, schema OK |
 | Replay of those 50 on IK-Abs (`actions` = EE targets) | **50/50** successful |

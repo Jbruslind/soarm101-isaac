@@ -1,7 +1,7 @@
 # F6: Fine-tune ACT and SmolVLA
 
 > **Track:** Fasteners Part 1 · **Time:** ~3 h, mostly waiting (ACT trains in 17 min, SmolVLA
-> in 2 h 16 min) · **GPU:** headless, the whole 12 GB card (stop Isaac Sim first) · **Script:**
+> in 2 h 16 min) · **GPU:** headless; SmolVLA needs about 5.5 GB free, ACT about 2 GB · **Script:**
 > [`tutorials/fasteners/part1/06_check_policy.py`](../../../tutorials/fasteners/part1/06_check_policy.py)
 
 In F5 you recorded demos of the arm putting an M6 bolt in the bin. Now you teach a neural
@@ -21,7 +21,7 @@ conversion (#34, PR #50) and the LeRobot training container (#35).
   the way.
 - What a policy actually learns: from images, joint state and (for SmolVLA) the prompt, to the
   next *chunk* of joint targets.
-- How to fine-tune both policies on a 12 GB GPU, and how to read their logs and loss curves.
+- How to fine-tune both policies on one GPU, and how to read their logs and loss curves.
 - How to measure a policy on held-out demos without a simulator, and why *how often it
   re-plans* matters as much as how long you train.
 
@@ -368,7 +368,7 @@ takes about 0.27 s. F7 uses this when it runs the policy live.
 - [ ] Both training runs end with `End of training`, and a `checkpoints/last/` exists for each
 - [ ] `[F6] PASS`: mean error ≤ 0.1 rad on the held-out demos with `--n-action-steps 10`
 
-Our run on an RTX A2000 12 GB:
+Our reference run (12 GB GPU):
 
 | Check | ACT | SmolVLA |
 |---|---|---|
@@ -438,7 +438,7 @@ run to run (we saw 0.029–0.032). ACT is deterministic.
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `train_lerobot.sh` stops with `Isaac Sim (soarm-isaac-sim) is running. Training needs the whole 12 GB GPU.` | Stop it (`docker ps`, then `docker rm -f <name>`). Use `--force` only if you know both fit in 12 GB. |
+| `train_lerobot.sh` stops with `Not enough free GPU memory for batch N` | Something holds the GPU, often an Isaac Sim container. `nvidia-smi` shows it; stop it (`docker ps`, then `docker rm -f <name>`). On a small card, pass a smaller `--batch`. |
 | `CUDA out of memory` while training SmolVLA | Something else is on the GPU, or the batch is too big. Batch 16 needs about 4.5 GB and batch 32 about 7.8 GB; batch 64 doesn't fit (see [LEROBOT_TRAINING.md](../../LEROBOT_TRAINING.md)). |
 | SmolVLA errors about missing image features (`observation.images.camera1`) | You left out `--rename-map`, or misspelled a key. The keys are `observation.images.overhead` and `observation.images.wrist`. |
 | `FileNotFoundError: ... /workspace/data/...` | The LeRobot container mounts `data/` at `/workspace/data`, not `/data` as in the Isaac container. |

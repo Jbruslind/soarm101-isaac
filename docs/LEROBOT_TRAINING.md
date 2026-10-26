@@ -1,7 +1,8 @@
-# LeRobot Training (SmolVLA + ACT) on a 12 GB GPU
+# LeRobot Training (SmolVLA + ACT) on a single GPU
 
 How to fine-tune LeRobot **SmolVLA** (from `lerobot/smolvla_base`) and train an **ACT**
-baseline locally, and what to expect on an RTX A2000 12 GB. This is the training step of
+baseline locally, what to expect on a 12 GB reference GPU, and how runs are sized for other
+GPUs ([Other GPUs](#other-gpus)). This is the training step of
 the fastener tutorials (epic #40, issue #35).
 
 **Short answer:** SmolVLA fine-tunes comfortably on 12 GB. Batch 16 peaks at 4.5 GB and
@@ -135,7 +136,33 @@ The measurements below use the public `lerobot/svla_so101_pickplace`: SO-101, 50
 
 ---
 
-## Measurements (RTX A2000 12 GB, 2026-10-20)
+## Other GPUs
+
+Nothing in the training path is tied to one card. `scripts/train_lerobot.sh` asks `nvidia-smi`
+how much GPU memory is **free** (so a running Isaac Sim counts against it), estimates what the
+run needs, and halves the default batch until it fits. An explicit `--batch` is checked but
+never changed. The estimate is fitted to the measurements below, with a 10 % margin:
+
+| Policy | Peak GPU memory (estimate) |
+|---|---|
+| SmolVLA (bf16, frozen vision encoder) | 1.6 GB + 0.21 GB per sample |
+| ACT (fp32) | 1.2 GB + 0.40 GB per sample at 640x480, scaled by image area (0.07 GB per sample at 224x224) |
+
+What that means for a few amounts of free memory (default batches are SmolVLA 16, ACT 8):
+
+| Free GPU memory | SmolVLA batch | ACT batch, 224x224 data | ACT batch, 640x480 data |
+|---|---|---|---|
+| 4 GB | 8 | 8 | 4 |
+| 6 GB | 16 | 8 | 8 |
+| 8 GB and up | 16 (pass `--batch 32` from 10 GB) | 8 (more with `--batch`) | 8 (`--batch 16` from 9 GB) |
+
+Training is compute-bound: samples per second stay about the same whatever the batch size, so
+a bigger batch gives smoother gradients but not shorter runs. Wall time scales with the GPU's
+compute: the 20 samples/s for SmolVLA below is the 12 GB reference card, and faster cards are
+proportionally quicker. If even batch 1 does not fit, the script stops and says how much
+memory is free. Stop what holds the GPU (`nvidia-smi`), or pass `--force` to try anyway.
+
+## Measurements (12 GB reference GPU, 2026-10-20)
 
 Method: `train_lerobot.sh` with `--steps 150` (SmolVLA) or `--steps 200` (ACT), `--log-freq 25`,
 6 workers, on `lerobot/svla_so101_pickplace`. Each run held the GPU alone. "Peak alloc" is

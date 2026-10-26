@@ -1,7 +1,7 @@
 """Convenience wrapper for launching OpenPi LoRA training.
 
 Sets up environment variables and calls OpenPi's train.py with
-the SO-ARM101 configuration. Handles both local (QLoRA on 3080 Ti)
+the SO-ARM101 configuration. Handles both local (QLoRA on the local GPU)
 and cloud (full-precision LoRA on A100) scenarios.
 
 Usage:

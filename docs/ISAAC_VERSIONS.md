@@ -40,7 +40,7 @@ before installing Isaac Lab. Keep that step when bumping the base image.
 | Isaac Sim | Driver 580.x | Driver 595 / 610 / 615 |
 |-----------|--------------|------------------------|
 | 5.1 (Isaac Lab 2.x) | works (580.65.06 validated) | **crashes** in `librtx.scenedb.plugin.so` on the first rendered frame, GUI and headless |
-| 6.2 | supported (>= 580.95.05) | works (tested on 615.71.09, RTX A2000 12 GB) |
+| 6.2 | supported (>= 580.95.05) | works (tested on 615.71.09 with a 12 GB RTX GPU) |
 
 See isaac-sim/IsaacSim#687 and #650 for the 5.1 crash reports.
 

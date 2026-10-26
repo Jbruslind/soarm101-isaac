@@ -7,7 +7,8 @@ for robot communication.
 
 ## Hardware Requirements
 
-- **GPU**: NVIDIA RTX 3080 Ti (12 GB) or better (RT cores required for Isaac Sim)
+- **GPU**: an NVIDIA RTX GPU (RT cores are required for Isaac Sim). The documented reference
+  runs use a 12 GB card; training sizes its batch to the free GPU memory.
 - **RAM**: 64 GB minimum, 256 GB recommended for CPU-offloaded training
 - **Disk**: 100 GB+ free (Isaac Sim container images are large)
 - **OS**: Ubuntu 22.04
@@ -26,7 +27,7 @@ bash scripts/smoke_test.sh
 # 2. Collect 100 episodes in headless Isaac Sim
 ./scripts/collect_sim_data.sh --env reach --episodes 100 --camera
 
-# 3. Train a pi0-FAST LoRA policy (QLoRA on 3080 Ti)
+# 3. Train a pi0-FAST LoRA policy (QLoRA on the local GPU)
 ./scripts/train.sh
 
 # 4. Evaluate trained policy in closed-loop simulation
@@ -51,7 +52,7 @@ every phase.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Local Machine (3080 Ti)                                │
+│  Local Machine (local GPU)                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │  Isaac Sim    │  │  ROS2 Bridge │  │   Data/      │  │
 │  │  Simulation   │──│  VLA Client  │  │   Episodes   │  │
@@ -112,7 +113,7 @@ detailed diagrams and data flow.
 | `deploy-local` | ROS2 + OpenPi | Real robot, local inference |
 | `deploy-remote` | ROS2 | Real robot, remote inference |
 
-Profiles prevent GPU memory conflicts on a 12 GB card by ensuring only
+Profiles prevent GPU memory conflicts on a single card by ensuring only
 compatible containers run simultaneously.
 
 ## Documentation
@@ -126,7 +127,7 @@ compatible containers run simultaneously.
 | **[Architecture](docs/ARCHITECTURE.md)** | System diagrams, data flows, container details, file map |
 | **[Data Pipeline](docs/DATA_PIPELINE.md)** | LeRobot v3.0 format, collection, normalization |
 | **[Training Guide](docs/OPENPI_TRAINING.md)** | OpenPi fine-tuning, memory budget, config reference |
-| **[LeRobot Training](docs/LEROBOT_TRAINING.md)** | SmolVLA / ACT fine-tuning on the 12 GB GPU: container, wrapper, VRAM/throughput table |
+| **[LeRobot Training](docs/LEROBOT_TRAINING.md)** | SmolVLA / ACT fine-tuning on one GPU: container, wrapper, VRAM/throughput table |
 | **[Isaac Sim Environments](docs/ISAAC_SIM_ENVIRONMENTS.md)** | Reach and pick tasks, observation/action spaces |
 | **[ROS2 Bridge](docs/ROS2_BRIDGE.md)** | VLA bridge node, topics, action chunking |
 | **[Remote Deployment](docs/REMOTE_DEPLOYMENT.md)** | Cloud GPU setup, TLS, data sync, latency |

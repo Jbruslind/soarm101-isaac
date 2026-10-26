@@ -54,7 +54,7 @@ graph LR
 
 ### Key Parameters
 
-| Parameter | Local (3080 Ti) | Cloud (A100) | Description |
+| Parameter | Local (local GPU) | Cloud (A100) | Description |
 |---|---|---|---|
 | `batch_size` | 1 | 4-8 | Samples per forward pass |
 | `gradient_accumulation` | 8 | 4 | Effective batch = BS x GA |
@@ -68,7 +68,7 @@ These are set via environment variables in `docker/.env` or
 
 ---
 
-## Memory Budget (3080 Ti, 12 GB)
+## Memory Budget (example: 12 GB GPU)
 
 ```
 ┌─────────────────────────────────────────────┐

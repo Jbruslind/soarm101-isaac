@@ -40,7 +40,7 @@ GUI over Moonlight. Part 2 scales up with headless Isaac Lab.
 | F3 | Grasp physics: contact angle vs squeeze, `solve_articulation_contact_last` | grasp holds through a lift | planned, needs #28 |
 | F4 | Scripted pick-and-place | ≥ 16/20 successes | planned, needs #32 |
 | [F5](fasteners/F5_record_demos.md) | Record demonstrations: 50 scripted + 5 keyboard teleop, check and replay them | `[F5] PASS`, replay 50/50 | **available** (LeRobot conversion: #34) |
-| [F6](fasteners/F6_finetune.md) | Convert to LeRobot, fine-tune ACT and SmolVLA on 12 GB, test on held-out demos | `[F6] PASS` (≤ 0.1 rad held-out error) | **available** |
+| [F6](fasteners/F6_finetune.md) | Convert to LeRobot, fine-tune ACT and SmolVLA, test on held-out demos | `[F6] PASS` (≤ 0.1 rad held-out error) | **available** |
 | F7 | Run your policy in Isaac Sim. **Part 1 milestone** | ≥ 6/10 on M6 | planned, needs #36 |
 
 **Part 2: headless scale-up in Isaac Lab** (scripts in `tutorials/fasteners/part2/`)
@@ -59,8 +59,8 @@ Critical path for the fastener track: #28 → #32 → #33 → #34 → #35 → #3
 
 ## Prerequisites
 
-- A Linux host with an NVIDIA RTX GPU (12 GB is enough; this repo is developed on an RTX A2000
-  12 GB), driver ≥ 580.95.05, Docker and the NVIDIA Container Toolkit. Versions:
+- A Linux host with an NVIDIA RTX GPU (the reference runs on these pages use a 12 GB card; the
+  scripts size their work to the free GPU memory, so other cards work too), driver ≥ 580.95.05, Docker and the NVIDIA Container Toolkit. Versions:
   [ISAAC_VERSIONS.md](../ISAAC_VERSIONS.md).
 - The `soarm-isaac-sim:6.2.0.1` image (`cd docker && docker compose build isaac-sim`, about an
   hour the first time) and the robot USD (committed; `./scripts/setup_robot_usd.sh` regenerates it).
@@ -113,5 +113,5 @@ instead of line numbers, and mark each excerpt with `<!-- snippet: path#name -->
 does not compile, or if a relative link is broken. Run it before committing a tutorial change.
 `scripts/smoke_test.sh` runs it too, and it becomes a CI step once the repo has CI (#3).
 
-**One GPU.** The 12 GB card runs one heavy job at a time. Don't train while Isaac Sim is
+**One GPU.** Unless your card is large, run one heavy job at a time. Don't train while Isaac Sim is
 running, and close GUI sessions before long headless runs.

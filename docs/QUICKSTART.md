@@ -10,7 +10,7 @@ running in simulation, all on a single machine with an NVIDIA GPU.
 ### Hardware
 
 - NVIDIA RTX 3070 or better (RT cores required for Isaac Sim)
-- 12+ GB VRAM (3080 Ti recommended)
+- An NVIDIA RTX GPU (the reference runs use 12 GB)
 - 64+ GB system RAM (256 GB recommended for CPU-offloaded training)
 - 100 GB free disk space
 
@@ -165,7 +165,7 @@ instruction for VLA conditioning.  Data is saved in LeRobot v3.0 format.
 Ensure **Step 1** is done so `robot_description/usd/soarm101/soarm101.usda` exists; otherwise the collector will fail when loading the env.
 
 ```bash
-# 50 reach-target episodes with cameras (5-10 minutes on a 3080 Ti)
+# 50 reach-target episodes with cameras (5-10 minutes on a 12 GB GPU)
 ./scripts/collect_sim_data.sh --env reach --episodes 50
 
 # Skip camera capture (not recommended for VLA training)
@@ -217,7 +217,7 @@ cat data/episodes/meta/info.json
 
 Fine-tune a pi0-FAST model on the collected episodes using LoRA.
 
-### Local Training (3080 Ti, QLoRA)
+### Local Training (QLoRA)
 
 ```bash
 ./scripts/train.sh
