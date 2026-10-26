@@ -231,6 +231,61 @@ container with your own inference server that speaks the same WebSocket
 protocol (see `ros2_ws/src/soarm_vla_bridge/soarm_vla_bridge/observation_builder.py`
 for the observation format).
 
+### Serving a fine-tuned LeRobot policy (ACT / SmolVLA)
+
+A checkpoint from `scripts/train_lerobot.sh` (see [LEROBOT_TRAINING.md](LEROBOT_TRAINING.md))
+is served by `training/scripts/lerobot_policy_server.py` on the same OpenPi websocket protocol.
+The bridge, this scene and the Isaac Sim closed-loop client
+(`tutorials/fasteners/part1/07_run_policy.py`, tutorial F7) use it unchanged:
+
+```bash
+./scripts/serve_lerobot.sh --checkpoint data/checkpoints/smolvla_fastener_m6_10k --detach
+curl -s http://127.0.0.1:8000/healthz                      # OK once the policy is loaded
+OPENPI_REQUIRE_OVERHEAD_IMAGE=1 ./scripts/interactive_test.sh --remote 127.0.0.1 --port 8000
+```
+
+- **Inputs.** Each request carries `state` (6 joint angles, rad), both camera images
+  (`cam_wrist`, `cam_overhead`, HxWx3 uint8) and the `prompt`. The server maps them onto the
+  checkpoint's LeRobot inputs through `soarm_common.contract`, and applies the normalization
+  and camera renames saved with the checkpoint. These policies need **both** cameras, so set
+  `OPENPI_REQUIRE_OVERHEAD_IMAGE=1` for the bridge. Then it waits for the overhead image
+  instead of sending requests the server would reject.
+- **Outputs and re-planning.** The reply is `{"actions": (n, 6)}`: absolute joint targets in
+  rad. *n* (`--n-action-steps`, default 10) is how many steps the client runs before it asks
+  again. F6 showed that re-planning every 10 steps tracks the expert 2.5x better than running a
+  whole 100-step ACT chunk. A request can override it with an `"n_action_steps"` key.
+- **Batching.** State `(N, 6)`, images `(N, H, W, 3)` and a list of prompts get `(N, n, 6)`
+  back. The F7 client and the evaluation harness (#37) use this to query many envs in one call.
+- **Which device.** `--device auto` (the default) uses the GPU when it has room for the
+  policy next to whatever already runs there, Isaac Sim included, and otherwise the CPU.
+  The policy uses about 0.9 GB (SmolVLA) or about 0.2 GB (ACT) of GPU memory once loaded, plus
+  the CUDA context. `--device cpu` forces the CPU; a server on another host also works
+  (`interactive_test.sh --remote HOST`).
+- **Checking it.** `training/scripts/check_policy_server.py` plays a LeRobot dataset to a
+  running server over the real protocol. It reports the action error against the recorded
+  actions, the round-trip time, and a batched-request test:
+
+  ```bash
+  cd docker && docker compose --profile serve-lerobot run --rm -e NVIDIA_VISIBLE_DEVICES=void lerobot-server \
+      python /training/scripts/check_policy_server.py --dataset /workspace/data/lerobot/fastener_m6_heldout
+  ```
+
+Reference numbers (12 GB GPU; the F6 held-out demos):
+
+| | SmolVLA (10k steps) | ACT (10k steps) |
+|---|---|---|
+| Action error vs recorded, re-plan every 10 steps | 0.028–0.030 rad (same as F6) | 0.073 rad |
+| Round trip per request, batch 1 (median) | 295 ms | 16 ms |
+| Batched request of 4 | 387 ms | — |
+| GPU memory with this interactive scene running | 1.2 GB server + 1.25 GB Isaac Sim = 2.7 GB in total | less |
+
+**Keeping up live.** The bridge asks again once its queue is empty, and one request covers
+*n* control steps (n / 30 s). If a round trip takes longer than that, the arm pauses between
+chunks. SmolVLA at n = 10 is right at the limit: 295 ms per request against a 333 ms budget. On
+a slower GPU or the CPU, raise `--n-action-steps` (25 gives 833 ms), or use `--flow-steps 5`
+(SmolVLA only: about half the inference time). The F7 client is not affected: the simulation
+waits for the server, so its results do not depend on speed.
+
 ### Testing without a model
 
 `scripts/mock_policy_server.py` is a stand-in policy server that speaks the OpenPi
